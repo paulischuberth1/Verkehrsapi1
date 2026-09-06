@@ -16,12 +16,11 @@ export default {
     const url = new URL(request.url);
 
     // =========================
-    // WhatsApp Webhook
+    // WHATSAPP WEBHOOK
     // =========================
-
     if (url.pathname === "/webhook") {
 
-      // Meta-Verifizierung
+      // Meta verifiziert den Webhook
       if (request.method === "GET") {
         const mode = url.searchParams.get("hub.mode");
         const token = url.searchParams.get("hub.verify_token");
@@ -34,7 +33,7 @@ export default {
         return new Response("Forbidden", { status: 403 });
       }
 
-      // WhatsApp-Nachricht
+      // Eingehende WhatsApp-Nachricht
       if (request.method === "POST") {
         const body = await request.json();
 
@@ -42,19 +41,25 @@ export default {
 
         return new Response("EVENT_RECEIVED", { status: 200 });
       }
+
+      return new Response("Method not allowed", { status: 405 });
     }
 
     return new Response(
       "VerkehrsAPI1 läuft. Schreib dem WhatsApp-Bot eine Nachricht.",
-      { status: 200 }
+      {
+        headers: {
+          "content-type": "text/plain; charset=utf-8"
+        }
+      }
     );
   }
 };
 
 
-// ==========================================
-// WHATSAPP-NACHRICHT VERARBEITEN
-// ==========================================
+// ======================================================
+// WHATSAPP VERARBEITEN
+// ======================================================
 
 async function handleWhatsApp(body, env) {
   try {
@@ -63,6 +68,7 @@ async function handleWhatsApp(body, env) {
 
     const message = value?.messages?.[0];
 
+    // Statusmeldungen ignorieren
     if (!message) return;
 
     const from = message.from;
@@ -75,24 +81,26 @@ async function handleWhatsApp(body, env) {
     if (!text) {
       await sendWhatsApp(
         from,
-        "Schreib mir einfach, was du über den Verkehr wissen möchtest.",
+        "Schreib mir einfach, was du über den Verkehr wissen möchtest. Zum Beispiel: „Was ist auf der A46 los?“",
         env
       );
       return;
     }
 
-    // Erst einfache Sachen ohne KI
-    const simple = simpleParser(text);
+    // Erst ohne KI versuchen
+    let intent = simpleParser(text);
 
-    let intent;
-
-    if (simple) {
-      intent = simple;
-    } else {
+    // Wenn unser Parser nicht reicht → KI
+    if (!intent) {
       intent = await understandWithAI(text, env);
     }
 
-    await processIntent(from, text, intent, env);
+    await processIntent(
+      from,
+      text,
+      intent,
+      env
+    );
 
   } catch (error) {
     console.error("Webhook error:", error);
@@ -100,98 +108,173 @@ async function handleWhatsApp(body, env) {
 }
 
 
-// ==========================================
-// EINFACHER PARSER
-// ==========================================
+// ======================================================
+// NORMALER PARSER
+// ======================================================
 
 function simpleParser(text) {
   const t = text
     .toLowerCase()
+    .replace(/[?!.,;:]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+
+  // -------------------------
+  // Hilfe
+  // -------------------------
 
   if (
     t === "hilfe" ||
     t === "help" ||
-    t === "was kann ich fragen" ||
-    t === "was kannst du"
+    t.includes("was kann ich fragen") ||
+    t.includes("was kann man fragen") ||
+    t.includes("was kannst du") ||
+    t.includes("was kann der bot")
   ) {
     return {
       action: "help"
     };
   }
 
+
+  // -------------------------
+  // Befehle
+  // -------------------------
+
   if (
     t.includes("alle befehle") ||
-    t.includes("befehle auflisten")
+    t.includes("befehle auflisten") ||
+    t.includes("befehlsliste") ||
+    t.includes("liste alle befehle")
   ) {
     return {
       action: "commands"
     };
   }
 
+
+  // -------------------------
+  // Autobahnen auflisten
+  // -------------------------
+
   if (
     t.includes("alle autobahnen") ||
-    t.includes("welche autobahnen")
+    t.includes("welche autobahnen") ||
+    t.includes("autobahnen auflisten") ||
+    t.includes("liste autobahnen")
   ) {
     return {
       action: "motorways"
     };
   }
 
-  // Nur A46, A3 usw.
+
+  // -------------------------
+  // Autobahn finden
+  // versteht A46 und A 46
+  // -------------------------
+
   const match =
     t.match(/\ba\s*(\d{1,3})\b/i);
 
-  if (
-    match &&
-    t.replace(/\s/g, "").match(/^a\d{1,3}$/i)
-  ) {
-    return {
-      action: "traffic",
-      road: `A${match[1]}`,
-      category: "all",
-      show_all: false
-    };
+  if (!match) {
+    return null;
   }
 
-  return null;
+  const road =
+    `A${match[1]}`;
+
+
+  // -------------------------
+  // Kategorie erkennen
+  // -------------------------
+
+  let category = "all";
+
+  if (
+    /baustell|bausteln|baustelen|baustelln|bauarbeiten/.test(t)
+  ) {
+    category = "roadworks";
+  }
+
+  if (
+    /sperr|gesperrt|vollsperr/.test(t)
+  ) {
+    category = "closure";
+  }
+
+  if (
+    /warn|gefahr/.test(t)
+  ) {
+    category = "warning";
+  }
+
+
+  // -------------------------
+  // Alle?
+  // -------------------------
+
+  const showAll =
+    /\balle\b|\balles\b|sämtliche|komplett|vollständig/.test(t);
+
+
+  // -------------------------
+  // Liste?
+  // akzeptiert auch "lite"
+  // -------------------------
+
+  const listRequested =
+    /\bliste\b|\blite\b|\blsite\b|\blsit\b|auflist|aufgelistet/.test(t);
+
+
+  return {
+    action: "traffic",
+    road,
+    location: null,
+    category,
+    show_all: showAll,
+    list_requested: listRequested
+  };
 }
 
 
-// ==========================================
-// KI VERSTEHT NATÜRLICHE SPRACHE
-// ==========================================
+// ======================================================
+// KI FÜR FREIE SPRACHE
+// ======================================================
 
 async function understandWithAI(text, env) {
+  try {
+    const result = await env.AI.run(
+      "@cf/meta/llama-3.1-8b-instruct-fast",
+      {
+        messages: [
+          {
+            role: "system",
+            content: `
+Du bist der Sprachparser eines deutschen WhatsApp-Verkehrsbots.
 
-  const result = await env.AI.run(
-    "@cf/meta/llama-3.1-8b-instruct-fast",
-    {
-      messages: [
-        {
-          role: "system",
-          content: `
-Du bist der Sprachparser für einen deutschen WhatsApp-Verkehrsbot.
+Deine Aufgabe ist ausschließlich:
+zu verstehen, was der Nutzer möchte.
 
-Du sollst NUR verstehen, was der Nutzer möchte.
-Du erfindest NIEMALS Verkehrsdaten.
+Du darfst NIEMALS Verkehrsdaten erfinden.
 
-Verstehe:
-- normales Deutsch
+Verstehe auch:
 - Umgangssprache
 - Tippfehler
-- kurze Nachrichten
-- lange Formulierungen
-- Sätze wie "kannste mal gucken"
+- unvollständige Sätze
+- "kannste"
+- "guck mal"
 - "such mir raus"
-- "mach mir eine liste"
-- "was geht auf der a46"
-- "zeig nur sperrungen"
-- "was kann ich fragen"
+- "mach ne liste"
+- "lite" wenn wahrscheinlich "Liste" gemeint ist
+- "was geht auf der A46"
+- "was ist da los"
+- höfliche und unhöfliche Formulierungen
 
-Mögliche action-Werte:
+Gib eine strukturierte Anfrage zurück.
 
+action:
 traffic
 help
 commands
@@ -199,106 +282,140 @@ motorways
 unknown
 
 category:
-
 all
 warning
 roadworks
 closure
 
 road:
-z.B. A46 oder A3.
-Wenn keine Straße genannt wurde: null.
+z.B. A46
+oder null
 
 location:
-z.B. Düsseldorf, Köln, Düsseldorf Flughafen.
-Wenn kein Ort genannt wurde: null.
+z.B. Düsseldorf
+Düsseldorf Flughafen
+Köln
+oder null
 
 show_all:
-true, wenn der Nutzer alle Meldungen oder eine vollständige Liste möchte.
+true, wenn alle oder sämtliche Meldungen gewünscht sind
 
 list_requested:
-true, wenn ausdrücklich eine Liste gewünscht wird.
+true, wenn der Nutzer eine Liste oder Auflistung möchte
 
 Wichtig:
-Aktuell können echte Daten nur für Autobahnen abgefragt werden.
-Orte und andere Straßen trotzdem erkennen und korrekt zurückgeben.
+Andere Straßen und Orte sollst du trotzdem erkennen,
+auch wenn die Datenquelle dafür aktuell noch nicht eingebaut ist.
 `
-        },
-        {
-          role: "user",
-          content: text
-        }
-      ],
+          },
+          {
+            role: "user",
+            content: text
+          }
+        ],
 
-      response_format: {
-        type: "json_schema",
+        response_format: {
+          type: "json_schema",
 
-        json_schema: {
-          name: "traffic_request",
+          json_schema: {
+            name: "traffic_request",
 
-          schema: {
-            type: "object",
+            schema: {
+              type: "object",
 
-            properties: {
-              action: {
-                type: "string",
-                enum: [
-                  "traffic",
-                  "help",
-                  "commands",
-                  "motorways",
-                  "unknown"
-                ]
+              properties: {
+                action: {
+                  type: "string",
+                  enum: [
+                    "traffic",
+                    "help",
+                    "commands",
+                    "motorways",
+                    "unknown"
+                  ]
+                },
+
+                road: {
+                  type: ["string", "null"]
+                },
+
+                location: {
+                  type: ["string", "null"]
+                },
+
+                category: {
+                  type: "string",
+                  enum: [
+                    "all",
+                    "warning",
+                    "roadworks",
+                    "closure"
+                  ]
+                },
+
+                show_all: {
+                  type: "boolean"
+                },
+
+                list_requested: {
+                  type: "boolean"
+                }
               },
 
-              road: {
-                type: ["string", "null"]
-              },
-
-              location: {
-                type: ["string", "null"]
-              },
-
-              category: {
-                type: "string",
-                enum: [
-                  "all",
-                  "warning",
-                  "roadworks",
-                  "closure"
-                ]
-              },
-
-              show_all: {
-                type: "boolean"
-              },
-
-              list_requested: {
-                type: "boolean"
-              }
-            },
-
-            required: [
-              "action",
-              "road",
-              "location",
-              "category",
-              "show_all",
-              "list_requested"
-            ]
+              required: [
+                "action",
+                "road",
+                "location",
+                "category",
+                "show_all",
+                "list_requested"
+              ]
+            }
           }
         }
       }
-    }
-  );
+    );
 
-  if (result?.response) {
-    try {
-      return JSON.parse(result.response);
-    } catch (_) {
-      console.log("AI JSON konnte nicht gelesen werden");
+
+    // WICHTIGER FIX:
+    // Cloudflare kann bereits ein fertiges Objekt liefern.
+    if (
+      result?.response &&
+      typeof result.response === "object"
+    ) {
+      return result.response;
     }
+
+
+    // Falls doch ein String geliefert wird
+    if (
+      result?.response &&
+      typeof result.response === "string"
+    ) {
+      try {
+        return JSON.parse(result.response);
+      } catch (error) {
+        console.error(
+          "AI JSON konnte nicht gelesen werden:",
+          result.response
+        );
+      }
+    }
+
+
+    // Manche Modelle liefern direkt das Objekt
+    if (
+      result &&
+      typeof result === "object" &&
+      result.action
+    ) {
+      return result;
+    }
+
+  } catch (error) {
+    console.error("Workers AI error:", error);
   }
+
 
   return {
     action: "unknown",
@@ -311,9 +428,9 @@ Orte und andere Straßen trotzdem erkennen und korrekt zurückgeben.
 }
 
 
-// ==========================================
-// INTENT AUSFÜHREN
-// ==========================================
+// ======================================================
+// ANFRAGE AUSFÜHREN
+// ======================================================
 
 async function processIntent(
   from,
@@ -322,23 +439,30 @@ async function processIntent(
   env
 ) {
 
-  // Hilfe
-  if (intent.action === "help") {
+  // -------------------------
+  // HILFE
+  // -------------------------
 
+  if (intent.action === "help") {
     await sendWhatsApp(
       from,
-`Klar. Du kannst mir ziemlich normal schreiben.
+`Klar. Du kannst mir ganz normal schreiben.
 
 Zum Beispiel:
 
-• Was ist auf der A46 los?
-• Such mir alle Baustellen auf der A3 raus.
-• Gibt es Sperrungen auf der A40?
-• Mach mir eine Liste aller Meldungen auf der A57.
-• Welche Autobahnen kannst du abfragen?
-• Liste alle Befehle auf.
+🚗 „Was ist auf der A46 los?“
 
-Du musst die Fragen nicht exakt so schreiben.
+🚧 „Such mir alle Baustellen auf der A3 raus.“
+
+⛔ „Gibt es Sperrungen auf der A40?“
+
+📋 „Mach mir eine Liste aller Meldungen auf der A57.“
+
+🛣️ „Welche Autobahnen kannst du abfragen?“
+
+📖 „Liste alle Befehle auf.“
+
+Du musst keinen genauen Befehl benutzen.
 Umgangssprache und kleinere Tippfehler sind okay.`,
       env
     );
@@ -347,39 +471,45 @@ Umgangssprache und kleinere Tippfehler sind okay.`,
   }
 
 
-  // Alle Möglichkeiten
-  if (intent.action === "commands") {
+  // -------------------------
+  // BEFEHLE
+  // -------------------------
 
+  if (intent.action === "commands") {
     await sendWhatsApp(
       from,
-`Das kannst du mich momentan fragen:
+`📋 Möglichkeiten
 
-🚗 Verkehr
-„A46“
-„Was ist auf der A46 los?“
-„Wie sieht es auf der A3 aus?“
+VERKEHR
+• A46
+• Verkehr A46
+• Was ist auf der A46 los?
 
-🚧 Baustellen
-„Baustellen A46“
-„Such mir Baustellen auf der A40 raus.“
+BAUSTELLEN
+• Baustellen A46
+• Such mir Baustellen auf A3 raus.
 
-⛔ Sperrungen
-„Sperrungen A57“
-„Ist auf der A3 etwas gesperrt?“
+SPERRUNGEN
+• Sperrungen A57
+• Was ist auf der A40 gesperrt?
 
-⚠️ Warnungen
-„Warnungen A1“
-„Gibt es Gefahrenmeldungen auf der A46?“
+WARNUNGEN
+• Warnungen A1
+• Gibt es Gefahren auf der A46?
 
-📋 Listen
-„Alle Meldungen A46“
-„Mach mir eine Liste aller Baustellen A3.“
+LISTEN
+• Alle Meldungen A46
+• Mach mir eine Liste aller Baustellen A3.
 
-🛣️ Übersicht
-„Welche Autobahnen kannst du?“
-„Alle Autobahnen“
+ÜBERSICHT
+• Welche Autobahnen kannst du?
+• Alle Autobahnen
 
-Du kannst die Sätze auch anders formulieren.`,
+HILFE
+• Hilfe
+• Was kann ich fragen?
+
+Du kannst diese Sätze auch ganz anders formulieren.`,
       env
     );
 
@@ -387,16 +517,19 @@ Du kannst die Sätze auch anders formulieren.`,
   }
 
 
-  // Autobahnen
-  if (intent.action === "motorways") {
+  // -------------------------
+  // AUTOBAHNEN
+  // -------------------------
 
+  if (intent.action === "motorways") {
     await sendWhatsApp(
       from,
-`Klar, hier sind die Autobahnen, die ich momentan für NRW vorgesehen habe:
+`🛣️ Autobahnen in NRW
 
 ${NRW_AUTOBAHNEN.join(", ")}
 
-Du kannst z. B. schreiben:
+Du kannst zum Beispiel schreiben:
+
 „Was ist auf der A46 los?“`,
       env
     );
@@ -405,21 +538,22 @@ Du kannst z. B. schreiben:
   }
 
 
-  // KI erkennt Ort, aber noch keine Straße
+  // -------------------------
+  // ORT ERKANNT
+  // -------------------------
+
   if (
     intent.action === "traffic" &&
     !intent.road &&
     intent.location
   ) {
-
     await sendWhatsApp(
       from,
 `Ich habe „${intent.location}“ als Ort erkannt.
 
-Die Ortssuche wird als Nächstes eingebaut. Im Moment kann ich die echten Verkehrsdaten direkt für Autobahnen abfragen.
+Die direkte Ortssuche für Städte, Flughäfen und normale Straßen bauen wir als Nächstes ein.
 
-Du kannst aber z. B. schreiben:
-„Verkehr A44 bei ${intent.location}“`,
+Momentan kann ich die Verkehrsdaten direkt für Autobahnen abrufen.`,
       env
     );
 
@@ -427,17 +561,20 @@ Du kannst aber z. B. schreiben:
   }
 
 
-  // Keine verwertbare Anfrage
+  // -------------------------
+  // NICHT VERSTANDEN
+  // -------------------------
+
   if (
     intent.action !== "traffic" ||
     !intent.road
   ) {
-
     await sendWhatsApp(
       from,
 `Ich bin mir noch nicht ganz sicher, was du abfragen möchtest.
 
 Du kannst einfach normal schreiben, zum Beispiel:
+
 „Such mir alle Baustellen auf der A46 raus.“
 
 Oder schreib „Hilfe“.`,
@@ -454,14 +591,18 @@ Oder schreib „Hilfe“.`,
       .replace(/\s/g, "");
 
 
-  if (!/^A\d{1,3}$/.test(road)) {
+  // -------------------------
+  // NOCH KEINE AUTOBAHN
+  // -------------------------
 
+  if (!/^A\d{1,3}$/.test(road)) {
     await sendWhatsApp(
       from,
 `Ich habe „${intent.road}“ als Straße erkannt.
 
-Aktuell sind die echten Daten für Autobahnen eingebaut.
-Bundesstraßen und Stadtstraßen kommen als nächster Schritt.`,
+Momentan kann ich die echten Daten direkt für Autobahnen abrufen.
+
+Bundesstraßen, Städte und normale Straßen bauen wir als nächsten Schritt ein.`,
       env
     );
 
@@ -469,45 +610,62 @@ Bundesstraßen und Stadtstraßen kommen als nächster Schritt.`,
   }
 
 
-  // Freundliche Zwischenmeldung
-  let loadingText =
-    `Klar, ich schaue mir ${road} gerade an.`;
+  // -------------------------
+  // ZWISCHENNACHRICHT
+  // -------------------------
+
+  let loading =
+    `Klar, ich schaue gerade nach, was auf der ${road} los ist. Einen Moment …`;
+
 
   if (intent.category === "roadworks") {
-    loadingText =
-      `Klar, ich suche dir die Baustellen auf der ${road} raus. Einen Moment …`;
+    loading =
+      `Klar, ich suche dir gerade die Baustellen auf der ${road} raus. Einen Moment …`;
   }
 
+
   if (intent.category === "closure") {
-    loadingText =
+    loading =
       `Klar, ich prüfe gerade die Sperrungen auf der ${road}. Einen Moment …`;
   }
 
+
   if (intent.category === "warning") {
-    loadingText =
+    loading =
       `Klar, ich prüfe gerade die Warnmeldungen für die ${road}. Einen Moment …`;
   }
 
-  if (intent.show_all || intent.list_requested) {
-    loadingText =
+
+  if (
+    intent.show_all ||
+    intent.list_requested
+  ) {
+    loading =
       `Klar, ich stelle dir gerade die gewünschte Liste für die ${road} zusammen. Einen Moment …`;
   }
 
 
   await sendWhatsApp(
     from,
-    loadingText,
+    loading,
     env
   );
 
 
-  // Verkehr abrufen
+  // -------------------------
+  // DATEN ABRUFEN
+  // -------------------------
+
   const data =
     await getTraffic(
       road,
       intent.category
     );
 
+
+  // -------------------------
+  // ANTWORT
+  // -------------------------
 
   const answer =
     formatTraffic(
@@ -525,16 +683,16 @@ Bundesstraßen und Stadtstraßen kommen als nächster Schritt.`,
 }
 
 
-// ==========================================
+// ======================================================
 // VERKEHRSDATEN
-// ==========================================
+// ======================================================
 
 async function getTraffic(
   road,
   category
 ) {
-
   const categories = [];
+
 
   if (
     category === "all" ||
@@ -546,6 +704,7 @@ async function getTraffic(
     ]);
   }
 
+
   if (
     category === "all" ||
     category === "roadworks"
@@ -555,6 +714,7 @@ async function getTraffic(
       "roadworks"
     ]);
   }
+
 
   if (
     category === "all" ||
@@ -569,29 +729,32 @@ async function getTraffic(
 
   const result = [];
 
+
   for (
     const [label, endpoint]
     of categories
   ) {
-
     try {
-
       const response =
         await fetch(
           `https://verkehr.autobahn.de/o/autobahn/${road}/services/${endpoint}`
         );
 
+
       if (!response.ok) {
         continue;
       }
 
+
       const json =
         await response.json();
+
 
       const reports =
         Array.isArray(json[endpoint])
           ? json[endpoint]
           : [];
+
 
       result.push({
         label,
@@ -601,27 +764,28 @@ async function getTraffic(
 
     } catch (error) {
       console.error(
-        "Traffic API:",
+        "Traffic API error:",
         error
       );
     }
   }
 
+
   return result;
 }
 
 
-// ==========================================
-// SCHÖNE ANTWORT
-// ==========================================
+// ======================================================
+// ANTWORT FORMATIEREN
+// ======================================================
 
 function formatTraffic(
   road,
   groups,
   intent
 ) {
-
   let total = 0;
+
 
   for (const group of groups) {
     total += group.reports.length;
@@ -637,7 +801,6 @@ function formatTraffic(
     `Fertig. Ich habe ${total} passende Meldungen für die ${road} gefunden.\n\n`;
 
 
-  // vollständige Liste
   const showEverything =
     intent.show_all ||
     intent.list_requested;
@@ -645,7 +808,7 @@ function formatTraffic(
 
   const maxPerGroup =
     showEverything
-      ? 20
+      ? 15
       : 4;
 
 
@@ -669,6 +832,7 @@ function formatTraffic(
         report.description?.[0] ||
         "Verkehrsmeldung";
 
+
       output +=
         `• ${cleanText(title)}\n`;
     }
@@ -678,24 +842,30 @@ function formatTraffic(
       group.reports.length >
       maxPerGroup
     ) {
-
       output +=
-        `• +${group.reports.length - maxPerGroup} weitere\n`;
+        `• Noch ${group.reports.length - maxPerGroup} weitere Meldungen\n`;
     }
+
 
     output += "\n";
   }
 
 
-  if (!showEverything && total > 4) {
+  if (
+    !showEverything &&
+    total > 4
+  ) {
     output +=
-      `Wenn du möchtest, schreib z. B. „alle Meldungen ${road}“ oder „mach mir eine komplette Liste“.`;
+      `Möchtest du mehr sehen? Du kannst zum Beispiel schreiben:\n„Alle Meldungen ${road}“`;
   }
 
 
-  if (showEverything && total > 20) {
+  if (
+    showEverything &&
+    total > 15
+  ) {
     output +=
-      `Es gibt noch weitere Meldungen. Später bauen wir dafür „Weiter“ und Seiten ein.`;
+      `Es gibt noch weitere Meldungen. Als Nächstes bauen wir dafür Seiten mit „Weiter“ ein.`;
   }
 
 
@@ -703,16 +873,15 @@ function formatTraffic(
 }
 
 
-// ==========================================
+// ======================================================
 // WHATSAPP SENDEN
-// ==========================================
+// ======================================================
 
 async function sendWhatsApp(
   to,
   text,
   env
 ) {
-
   const response =
     await fetch(
       `https://graph.facebook.com/${GRAPH_VERSION}/${env.PHONE_NUMBER_ID}/messages`,
@@ -736,7 +905,8 @@ async function sendWhatsApp(
 
           to,
 
-          type: "text",
+          type:
+            "text",
 
           text: {
             preview_url: false,
@@ -748,7 +918,6 @@ async function sendWhatsApp(
 
 
   if (!response.ok) {
-
     const error =
       await response.text();
 
@@ -760,12 +929,11 @@ async function sendWhatsApp(
 }
 
 
-// ==========================================
+// ======================================================
 // HELFER
-// ==========================================
+// ======================================================
 
 function cleanText(value) {
-
   return String(value)
     .replace(/\s+/g, " ")
     .trim()
