@@ -1,25 +1,10 @@
 const VERIFY_TOKEN = "verkehrsapi1-verify-test1";
 const GRAPH_VERSION = "v26.0";
 
-const AUTOBAHN_API =
-  "https://verkehr.autobahn.de/o/autobahn";
+const AUTOBAHN_API = "https://verkehr.autobahn.de/o/autobahn";
 
-const NRW_WFS =
-  "https://www.verkehr.nrw/geoserver/vipnrw/wms";
-
-const NRW_DETAILS =
-  "https://verkehr.autobahn.de/karte?p_p_id=de_strassennrw_vipnrw_map_portlet_MapPortlet&p_p_lifecycle=2&p_p_state=normal&p_p_mode=view&p_p_cacheability=cacheLevelPage";
-
-const NOMINATIM =
-  "https://nominatim.openstreetmap.org/search";
-
-const PREVIEW_SIZE = 5;
-const MAX_WHATSAPP_LENGTH = 3800;
-
-
-// ======================================================
-// QUELLEN
-// ======================================================
+const PREVIEW_SIZE = 7;
+const MAX_MESSAGE_LENGTH = 3800;
 
 const SOURCE_AUTOBAHN = {
   id: "autobahn",
@@ -28,29 +13,6 @@ const SOURCE_AUTOBAHN = {
   website: "https://www.autobahn.de/",
   dataUrl: "https://verkehr.autobahn.de/"
 };
-
-const SOURCE_NRW = {
-  id: "verkehr-nrw",
-  name: "VERKEHR.NRW – Verkehrsdaten",
-  provider: "MOBIDROM / VERKEHR.NRW",
-  website: "https://www.verkehr.nrw/",
-  dataUrl: "https://www.verkehr.nrw/"
-};
-
-
-// ======================================================
-// NRW-WFS-LAYER
-// ======================================================
-
-const NRW_WFS_TYPES = [
-  "vipnrw:planed_traffic_interstate_feature",
-  "vipnrw:planed_traffic_urban_feature",
-  "vipnrw:traffic_roadworks_urban_feature",
-  "vipnrw:traffic_roadworks_interstate_feature",
-  "vipnrw:traffic_obstructions_urban_feature",
-  "vipnrw:traffic_obstructions_interstate_feature",
-  "vipnrw:traffic_abnormal_travel_time_loss_feature"
-];
 
 
 // ======================================================
@@ -62,93 +24,66 @@ export default {
     const url = new URL(request.url);
 
     if (url.pathname !== "/webhook") {
-      return new Response(
-        "VerkehrsAPI1 läuft.",
-        {
-          headers: {
-            "content-type":
-              "text/plain; charset=utf-8"
-          }
+      return new Response("VerkehrsAPI1 läuft.", {
+        headers: {
+          "content-type": "text/plain; charset=utf-8"
         }
-      );
+      });
     }
 
-
-    // --------------------------------------------------
-    // WEBHOOK VERIFIZIERUNG
-    // --------------------------------------------------
-
+    // Meta Webhook-Verifizierung
     if (request.method === "GET") {
-      const mode =
-        url.searchParams.get("hub.mode");
-
-      const token =
-        url.searchParams.get(
-          "hub.verify_token"
-        );
-
-      const challenge =
-        url.searchParams.get(
-          "hub.challenge"
-        );
-
+      const mode = url.searchParams.get("hub.mode");
+      const token = url.searchParams.get("hub.verify_token");
+      const challenge = url.searchParams.get("hub.challenge");
 
       if (
         mode === "subscribe" &&
         token === VERIFY_TOKEN
       ) {
-        return new Response(
-          challenge || "",
-          { status: 200 }
-        );
+        return new Response(challenge || "", {
+          status: 200
+        });
       }
 
-
-      return new Response(
-        "Forbidden",
-        { status: 403 }
-      );
+      return new Response("Forbidden", {
+        status: 403
+      });
     }
 
-
-    // --------------------------------------------------
-    // WHATSAPP EVENT
-    // --------------------------------------------------
-
+    // Eingehende WhatsApp-Nachricht
     if (request.method === "POST") {
-      const body =
-        await request.json();
+      let body;
+
+      try {
+        body = await request.json();
+      } catch {
+        return new Response("Bad Request", {
+          status: 400
+        });
+      }
 
       ctx.waitUntil(
-        handleWhatsApp(
-          body,
-          env
-        )
+        handleWhatsApp(body, env)
       );
 
-      return new Response(
-        "EVENT_RECEIVED",
-        { status: 200 }
-      );
+      return new Response("EVENT_RECEIVED", {
+        status: 200
+      });
     }
 
-
-    return new Response(
-      "Method not allowed",
-      { status: 405 }
-    );
+    return new Response("Method not allowed", {
+      status: 405
+    });
   }
 };
 
 
 // ======================================================
-// WHATSAPP EINGANG
+// WHATSAPP-EINGANG
 // ======================================================
 
-async function handleWhatsApp(
-  body,
-  env
-) {
+async function handleWhatsApp(body, env) {
   try {
     const value =
       body?.entry?.[0]
@@ -160,34 +95,29 @@ async function handleWhatsApp(
 
     if (!message) return;
 
-
-    const from =
-      message.from;
+    const from = message.from;
 
     if (!from) return;
 
-
     const text =
-      message.text?.body
-        ?.trim() || "";
-
+      message.text?.body?.trim() || "";
 
     if (!text) {
       await sendWhatsApp(
         from,
-`Du kannst mir einfach schreiben, was du wissen möchtest.
+        `Du kannst mir einfach ganz normal schreiben.
 
 Zum Beispiel:
 
 „Was ist auf der A46 los?“
 
-„Alle Meldungen A3“
+„Baustellen A3“
 
-„Verkehr Düsseldorf“
+„Alle Meldungen A40“
 
-„Düsseldorf Flughafen“
+„Woher hast du deine Daten?“
 
-„Woher hast du die Daten?“
+„Was bist du?“
 
 Oder schreib „Hilfe“.`,
         env
@@ -196,73 +126,38 @@ Oder schreib „Hilfe“.`,
       return;
     }
 
+    const t = normalizeInput(text);
 
-    const t =
-      normalizeInput(text);
-
-
-    // --------------------------------------------------
     // WEITER
-    // --------------------------------------------------
-
     if (
-      /^(weiter|mehr|weiter bitte|mehr anzeigen|rest|rest anzeigen)$/
-        .test(t)
+      /^(weiter|mehr|weiter bitte|mehr anzeigen|rest|rest anzeigen)$/.test(t)
     ) {
-      await sendRemaining(
-        from,
-        env
-      );
-
+      await sendRemaining(from, env);
       return;
     }
 
-
-    // --------------------------------------------------
     // QUELLEN
-    // --------------------------------------------------
-
-    if (
-      isSourceQuestion(t)
-    ) {
-      await answerSources(
-        from,
-        env
-      );
-
+    if (isSourceQuestion(t)) {
+      await answerSources(from, env);
       return;
     }
 
-
-    // --------------------------------------------------
-    // INFORMATIONEN ÜBER BOT
-    // --------------------------------------------------
-
-    if (
-      isAboutQuestion(t)
-    ) {
-      await answerAbout(
-        from,
-        t,
-        env
-      );
-
+    // FRAGEN ÜBER DEN BOT
+    if (isAboutQuestion(t)) {
+      await answerAbout(from, t, env);
       return;
     }
 
+    // Erst ohne KI versuchen
+    let intent = simpleParser(text);
 
-    let intent =
-      simpleParser(text);
-
-
+    // Falls nötig KI verwenden
     if (!intent) {
-      intent =
-        await understandWithAI(
-          text,
-          env
-        );
+      intent = await understandWithAI(
+        text,
+        env
+      );
     }
-
 
     await processIntent(
       from,
@@ -273,7 +168,7 @@ Oder schreib „Hilfe“.`,
 
   } catch (error) {
     console.error(
-      "handleWhatsApp:",
+      "Webhook error:",
       error
     );
   }
@@ -285,9 +180,7 @@ Oder schreib „Hilfe“.`,
 // ======================================================
 
 function simpleParser(text) {
-  const t =
-    normalizeInput(text);
-
+  const t = normalizeInput(text);
 
   if (
     t === "hilfe" ||
@@ -300,7 +193,6 @@ function simpleParser(text) {
     };
   }
 
-
   if (
     t.includes("alle befehle") ||
     t.includes("befehlsliste") ||
@@ -311,114 +203,105 @@ function simpleParser(text) {
     };
   }
 
-
   if (
-    t.includes("wo ist am meisten los") ||
-    t.includes("meiste verlustzeit") ||
-    t.includes("höchste verlustzeit") ||
-    t.includes("hoechste verlustzeit")
+    t.includes("welche autobahnen") ||
+    t.includes("autobahnen auflisten") ||
+    t === "autobahnen"
   ) {
     return {
-      action: "top_traffic"
+      action: "roads"
     };
   }
 
-
-  const roadMatch =
+  // A46, A 46, B8, L381 usw.
+  const match =
     t.match(
-      /\b(a|b|l|k|s|st)\s*(\d{1,4})\b/i
+      /\b(a|b|l|st|s|k)\s*(\d{1,4})\b/i
     );
 
-
-  let road = null;
-
-  if (roadMatch) {
-    road =
-      `${roadMatch[1].toUpperCase()}${roadMatch[2]}`;
+  if (!match) {
+    return null;
   }
 
+  const road =
+    `${match[1].toUpperCase()}${match[2]}`;
 
-  let category =
-    "all";
-
+  let category = "all";
 
   if (
     /baustell|bauarbeiten/.test(t)
   ) {
-    category =
-      "roadworks";
+    category = "roadworks";
   }
-
 
   if (
     /sperr|gesperrt|vollsperr/.test(t)
   ) {
-    category =
-      "closure";
+    category = "closure";
   }
-
 
   if (
-    /warn|gefahr|stau|verkehr/.test(t)
+    /warn|gefahr/.test(t)
   ) {
-    category =
-      category === "all"
-        ? "all"
-        : category;
+    category = "warning";
   }
-
 
   const showAll =
-    /\balle\b|\balles\b|sämtliche|saemtliche|komplett|vollständig|vollstaendig/
-      .test(t);
+    /\balle\b/.test(t) ||
+    /\balles\b/.test(t) ||
+    t.includes("sämtliche") ||
+    t.includes("saemtliche") ||
+    t.includes("sende mir alle") ||
+    t.includes("zeig mir alle") ||
+    t.includes("zeige mir alle");
 
-
-  if (road) {
-    return {
-      action: "traffic",
-      road,
-      location: null,
-      category,
-      show_all: showAll
-    };
-  }
-
-
-  return null;
+  return {
+    action: "traffic",
+    road,
+    location: null,
+    category,
+    show_all: showAll
+  };
 }
 
 
 // ======================================================
-// KI PARSER
+// WORKERS AI – ANFRAGE VERSTEHEN
 // ======================================================
 
-async function understandWithAI(
-  text,
-  env
-) {
-  try {
-    const result =
-      await env.AI.run(
-        "@cf/meta/llama-3.1-8b-instruct-fast",
-        {
-          messages: [
-            {
-              role: "system",
-              content: `
-Du bist der Sprachparser eines
-deutschen WhatsApp-Verkehrsbots.
+async function understandWithAI(text, env) {
+  if (!env.AI) {
+    return {
+      action: "chat",
+      road: null,
+      location: null,
+      category: "all",
+      show_all: false
+    };
+  }
 
-Du sollst ausschließlich verstehen,
-was der Nutzer möchte.
+  try {
+    const result = await env.AI.run(
+      "@cf/meta/llama-3.1-8b-instruct-fast",
+      {
+        messages: [
+          {
+            role: "system",
+            content: `
+Du bist der Sprachparser eines deutschen
+WhatsApp-Verkehrsbots.
+
+Deine Aufgabe ist ausschließlich,
+die Anfrage des Nutzers zu verstehen.
 
 Erfinde niemals Verkehrsdaten.
 
-Aktionen:
+Mögliche Aktionen:
 
 traffic
 help
 commands
-top_traffic
+roads
 chat
 unknown
 
@@ -429,21 +312,16 @@ A46
 A3
 B8
 L381
-K12
+St2418
 
 oder null.
 
 location:
 
-Ein Ort, Stadtteil, Flughafen,
-Straße oder eine Kombination daraus.
-
-Beispiele:
-
+Zum Beispiel:
 Düsseldorf
+Köln
 Düsseldorf Flughafen
-Kölner Straße Düsseldorf
-B8 Düsseldorf
 
 oder null.
 
@@ -456,115 +334,68 @@ closure
 
 show_all:
 
-true bei:
-"alle Meldungen"
-"alles"
-"sende mir alle"
-"zeige mir alle"
+true, wenn ausdrücklich alle Meldungen
+angefordert werden.
 
-Wenn der Nutzer nur normal redet,
-verwende action "chat".
+Beispiele:
 
-Verkehrsdaten dürfen niemals
-vom KI-Modell beantwortet werden.
+"Alle Meldungen A46"
+"Sende mir alle Meldungen auf der A3"
+"Zeig mir alles auf der A7"
+
+Wenn der Nutzer einfach normal mit dem
+Bot spricht und keine Verkehrsdaten
+anfordert, verwende action "chat".
+
+WICHTIG:
+
+Die KI darf keine aktuelle Verkehrslage
+aus ihrem eigenen Wissen beantworten.
+
+Aktuelle Verkehrsinformationen müssen
+immer aus einer angebundenen
+Verkehrsdatenquelle stammen.
+
+Antworte ausschließlich als JSON.
 `
-            },
-
-            {
-              role: "user",
-              content: text
-            }
-          ],
-
-          response_format: {
-            type: "json_schema",
-
-            json_schema: {
-              name: "traffic_request",
-
-              schema: {
-                type: "object",
-
-                properties: {
-                  action: {
-                    type: "string",
-                    enum: [
-                      "traffic",
-                      "help",
-                      "commands",
-                      "top_traffic",
-                      "chat",
-                      "unknown"
-                    ]
-                  },
-
-                  road: {
-                    type: [
-                      "string",
-                      "null"
-                    ]
-                  },
-
-                  location: {
-                    type: [
-                      "string",
-                      "null"
-                    ]
-                  },
-
-                  category: {
-                    type: "string",
-                    enum: [
-                      "all",
-                      "warning",
-                      "roadworks",
-                      "closure"
-                    ]
-                  },
-
-                  show_all: {
-                    type: "boolean"
-                  }
-                },
-
-                required: [
-                  "action",
-                  "road",
-                  "location",
-                  "category",
-                  "show_all"
-                ]
-              }
-            }
+          },
+          {
+            role: "user",
+            content: text
           }
-        }
-      );
+        ]
+      }
+    );
 
+    let response = result?.response;
 
     if (
-      result?.response &&
-      typeof result.response === "object"
+      response &&
+      typeof response === "object"
     ) {
-      return result.response;
+      return normalizeIntent(response);
     }
 
-
     if (
-      typeof result?.response ===
-      "string"
+      typeof response === "string"
     ) {
-      return JSON.parse(
-        result.response
-      );
+      response = response
+        .replace(/```json/gi, "")
+        .replace(/```/g, "")
+        .trim();
+
+      const parsed =
+        JSON.parse(response);
+
+      return normalizeIntent(parsed);
     }
 
   } catch (error) {
     console.error(
-      "AI parser:",
+      "Workers AI parser error:",
       error
     );
   }
-
 
   return {
     action: "chat",
@@ -576,8 +407,52 @@ vom KI-Modell beantwortet werden.
 }
 
 
+function normalizeIntent(intent) {
+  const allowedActions = [
+    "traffic",
+    "help",
+    "commands",
+    "roads",
+    "chat",
+    "unknown"
+  ];
+
+  const allowedCategories = [
+    "all",
+    "warning",
+    "roadworks",
+    "closure"
+  ];
+
+  return {
+    action:
+      allowedActions.includes(intent?.action)
+        ? intent.action
+        : "unknown",
+
+    road:
+      intent?.road
+        ? normalizeRoad(intent.road)
+        : null,
+
+    location:
+      intent?.location
+        ? String(intent.location).trim()
+        : null,
+
+    category:
+      allowedCategories.includes(intent?.category)
+        ? intent.category
+        : "all",
+
+    show_all:
+      intent?.show_all === true
+  };
+}
+
+
 // ======================================================
-// INTENT
+// INTENT VERARBEITEN
 // ======================================================
 
 async function processIntent(
@@ -587,49 +462,41 @@ async function processIntent(
   env
 ) {
 
-  // --------------------------------------------------
   // HILFE
-  // --------------------------------------------------
-
-  if (
-    intent.action === "help"
-  ) {
-    let text =
+  if (intent.action === "help") {
+    let answer =
 `Du kannst mir ganz normal schreiben.
 
 Zum Beispiel:
 
-🚗 „Was ist auf der A46 los?“
+„Was ist auf der A46 los?“
 
-🚧 „Baustellen A3“
+„Welche Baustellen gibt es auf der A3?“
 
-⛔ „Sperrungen A40“
+„Gibt es Sperrungen auf der A40?“
 
-📋 „Alle Meldungen A57“
+„Alle Meldungen A57“
 
-📍 „Verkehr Düsseldorf“
+„Welche Autobahnen kannst du abfragen?“
 
-✈️ „Düsseldorf Flughafen“
+„Woher hast du deine Daten?“
 
-📊 „Wo ist gerade am meisten los?“
-
-🔎 „Woher hast du die Daten?“
-
-ℹ️ „Wie funktionierst du?“
+„Was bist du?“
 
 Wenn zunächst nur fünf Meldungen angezeigt werden,
-schreib einfach „Weiter“.`;
+kannst du anschließend „Weiter“ schreiben.
 
+Du musst keinen bestimmten Befehl verwenden.
+Normale Formulierungen und kleinere Tippfehler sind okay.`;
 
     if (env.CONTACT_EMAIL) {
-      text +=
+      answer +=
         `\n\nBei Fragen oder Problemen:\n${env.CONTACT_EMAIL}`;
     }
 
-
     await sendWhatsApp(
       from,
-      text,
+      answer,
       env
     );
 
@@ -637,13 +504,8 @@ schreib einfach „Weiter“.`;
   }
 
 
-  // --------------------------------------------------
   // BEFEHLE
-  // --------------------------------------------------
-
-  if (
-    intent.action === "commands"
-  ) {
+  if (intent.action === "commands") {
     await sendWhatsApp(
       from,
 `Mögliche Abfragen:
@@ -652,15 +514,16 @@ schreib einfach „Weiter“.`;
 • Verkehr A46
 • Baustellen A3
 • Sperrungen A40
+• Warnungen A1
 • Alle Meldungen A57
-• Verkehr Düsseldorf
-• Düsseldorf Flughafen
 • Weiter
+• Welche Autobahnen kannst du abfragen?
 • Quellen
+• Was bist du?
 • Wie funktionierst du?
 • Hilfe
 
-Du musst diese Formulierungen nicht genau verwenden.`,
+Du kannst die Fragen auch ganz anders formulieren.`,
       env
     );
 
@@ -668,52 +531,39 @@ Du musst diese Formulierungen nicht genau verwenden.`,
   }
 
 
-  // --------------------------------------------------
-  // TOP VERKEHR NRW
-  // --------------------------------------------------
-
-  if (
-    intent.action === "top_traffic"
-  ) {
+  // AUTOBAHNLISTE
+  if (intent.action === "roads") {
     await sendWhatsApp(
       from,
-      `Klar, ich schaue nach aktuellen Bereichen mit auffälligen Reisezeitverlusten. Einen Moment …`,
+      `Klar, ich schaue nach, welche Autobahnen die Datenquelle aktuell bereitstellt. Einen Moment …`,
       env
     );
 
+    const roads =
+      await getAvailableRoads();
 
-    const result =
-      await getTopTravelLossNRW();
-
-
-    if (!result.length) {
+    if (!roads.length) {
       await sendWhatsApp(
         from,
-        `Ich konnte gerade keine entsprechende NRW-Verkehrsübersicht abrufen.`,
+        `Ich konnte die Liste gerade nicht abrufen. Versuch es bitte später noch einmal.`,
         env
       );
 
       return;
     }
 
-
-    let answer =
-      `Hier sind aktuell auffällige Verkehrsmeldungen mit Reisezeitverlusten in NRW:\n\n`;
-
-
-    result
-      .slice(0, 10)
-      .forEach(
-        (report, index) => {
-          answer +=
-            `${index + 1}. ${report.title}\n`;
-        }
+    const autobahns =
+      roads.filter(
+        road =>
+          /^A\s*\d+/i.test(road)
       );
 
+    const answer =
+`Hier sind die aktuell verfügbaren Autobahnen:
 
-    answer +=
-      `\nQuelle: ${SOURCE_NRW.name}`;
+${autobahns.join(", ")}
 
+Quelle: ${SOURCE_AUTOBAHN.name}`;
 
     await sendLongText(
       from,
@@ -725,10 +575,7 @@ Du musst diese Formulierungen nicht genau verwenden.`,
   }
 
 
-  // --------------------------------------------------
   // NORMALER CHAT
-  // --------------------------------------------------
-
   if (
     intent.action === "chat" ||
     intent.action === "unknown"
@@ -743,8 +590,29 @@ Du musst diese Formulierungen nicht genau verwenden.`,
   }
 
 
+  // ORT OHNE AUTOBAHN
   if (
-    intent.action !== "traffic"
+    intent.action === "traffic" &&
+    !intent.road &&
+    intent.location
+  ) {
+    await sendWhatsApp(
+      from,
+`Ich habe „${cleanText(intent.location)}“ als Ort erkannt.
+
+Für Bundesstraßen, Landes- und Staatsstraßen sowie Stadt- und Nebenstraßen stehen mir derzeit noch nicht ausreichend Verkehrs- und Vergleichsdaten zur Verfügung, um überall zuverlässige Auskünfte geben zu können.
+
+Autobahnen kann ich bereits direkt abfragen.`,
+      env
+    );
+
+    return;
+  }
+
+
+  if (
+    intent.action !== "traffic" ||
+    !intent.road
   ) {
     await normalChat(
       from,
@@ -756,102 +624,78 @@ Du musst diese Formulierungen nicht genau verwenden.`,
   }
 
 
-  // --------------------------------------------------
+  const road =
+    normalizeRoad(intent.road);
+
+
+  // NOCH NICHT AUSREICHEND UNTERSTÜTZTE STRASSEN
+  if (!road.startsWith("A")) {
+    await sendWhatsApp(
+      from,
+`Ich habe ${road} als Straße erkannt.
+
+Für Bundesstraßen, Landes- und Staatsstraßen sowie Stadt- und Nebenstraßen stehen mir derzeit noch nicht ausreichend Verkehrs- und Vergleichsdaten zur Verfügung, um überall zuverlässige Auskünfte geben zu können.
+
+Für Autobahnen kann ich bereits aktuelle Verkehrsmeldungen abrufen.`,
+      env
+    );
+
+    return;
+  }
+
+
   // ZWISCHENNACHRICHT
-  // --------------------------------------------------
-
-  const description =
-    intent.road ||
-    intent.location ||
-    "deiner Anfrage";
-
-
   await sendWhatsApp(
     from,
-    createLoadingText(
-      description,
+    createLoadingMessage(
+      road,
       intent
     ),
     env
   );
 
 
-  // --------------------------------------------------
-  // DATEN SUCHEN
-  // --------------------------------------------------
-
-  let result;
-
-
-  if (
-    intent.location
-  ) {
-    result =
-      await searchLocationTraffic(
-        intent.location,
-        intent.road,
-        intent.category,
-        env
-      );
-  }
-
-  else if (
-    intent.road
-  ) {
-    result =
-      await getRoadTraffic(
-        normalizeRoad(
-          intent.road
-        ),
-        intent.category
-      );
-  }
-
-  else {
-    await sendWhatsApp(
-      from,
-      `Ich konnte noch nicht erkennen, für welche Straße oder welchen Ort du die Verkehrslage möchtest.`,
-      env
+  // DATEN ABRUFEN
+  const result =
+    await getTrafficFromProviders(
+      road,
+      intent.category
     );
-
-    return;
-  }
-
-
-  // --------------------------------------------------
-  // AUSSERHALB NRW BEI ORTSSUCHE
-  // --------------------------------------------------
-
-  if (
-    result?.outsideNRW
-  ) {
-    await sendWhatsApp(
-      from,
-`Den Ort habe ich gefunden.
-
-Die zusätzliche Orts- und Stadtstraßensuche über VERKEHR.NRW deckt jedoch Nordrhein-Westfalen ab.
-
-Für nummerierte Straßen wie A3 oder B8 kann ich trotzdem die angebundene Straßen-API abfragen.`,
-      env
-    );
-
-    return;
-  }
-
 
   const reports =
-    result?.reports || [];
+    result.reports;
 
   const sources =
-    result?.sources || [];
+    result.sources;
 
 
   if (!reports.length) {
+    await saveSession(
+      from,
+      {
+        road,
+        reports: [],
+        sources:
+          sources.length
+            ? sources
+            : [SOURCE_AUTOBAHN],
+        created: Date.now(),
+        allShown: true
+      },
+      env
+    );
+
     await sendWhatsApp(
       from,
-`Ich habe nachgesehen. Aktuell habe ich dafür keine passenden Verkehrsmeldungen gefunden.
+`Ich habe nachgesehen. Aktuell habe ich keine passenden Verkehrsmeldungen für die ${road} gefunden.
 
-Das bedeutet nicht zwingend, dass dort keinerlei Verkehr besteht – nur, dass die angebundenen Datenquellen gerade keine passende Meldung geliefert haben.`,
+Das bedeutet nicht unbedingt, dass dort keinerlei Verkehr oder Verzögerungen bestehen. Die angebundene Datenquelle hat für deine Anfrage gerade keine passende Meldung geliefert.
+
+${shortSourceLine(
+  sources.length
+    ? sources
+    : [SOURCE_AUTOBAHN]
+)}`,
       env
     );
 
@@ -859,35 +703,25 @@ Das bedeutet nicht zwingend, dass dort keinerlei Verkehr besteht – nur, dass d
   }
 
 
-  // --------------------------------------------------
-  // SESSION
-  // --------------------------------------------------
+  // ALLE MELDUNGEN DIREKT
+  if (intent.show_all) {
+    await saveSession(
+      from,
+      {
+        road,
+        reports,
+        sources,
+        created: Date.now(),
+        allShown: true
+      },
+      env
+    );
 
-  await saveSession(
-    from,
-    {
-      reports,
-      sources,
-      description,
-      created:
-        Date.now()
-    },
-    env
-  );
-
-
-  // --------------------------------------------------
-  // ALLE
-  // --------------------------------------------------
-
-  if (
-    intent.show_all
-  ) {
     await sendAllReports(
       from,
       reports,
       sources,
-      `Hier sind alle ${reports.length} gefundenen Meldungen für ${description}:`,
+      `Hier sind alle ${reports.length} gefundenen Meldungen für die ${road}:`,
       env
     );
 
@@ -895,9 +729,19 @@ Das bedeutet nicht zwingend, dass dort keinerlei Verkehr besteht – nur, dass d
   }
 
 
-  // --------------------------------------------------
-  // VORSCHAU
-  // --------------------------------------------------
+  // NORMALE VORSCHAU
+  await saveSession(
+    from,
+    {
+      road,
+      reports,
+      sources,
+      created: Date.now(),
+      allShown:
+        reports.length <= PREVIEW_SIZE
+    },
+    env
+  );
 
   const preview =
     reports.slice(
@@ -905,46 +749,41 @@ Das bedeutet nicht zwingend, dass dort keinerlei Verkehr besteht – nur, dass d
       PREVIEW_SIZE
     );
 
-
   let answer;
 
-
-  if (
-    reports.length >
-    PREVIEW_SIZE
-  ) {
+  if (reports.length > PREVIEW_SIZE) {
     answer =
-      `Hier sind die ersten ${PREVIEW_SIZE} von ${reports.length} Meldungen für ${description}:\n\n`;
+      `Hier sind die ersten ${PREVIEW_SIZE} von ${reports.length} Meldungen für die ${road}:\n\n`;
+  }
+
+  else if (reports.length === 1) {
+    answer =
+      `Hier ist die aktuell gefundene Meldung für die ${road}:\n\n`;
   }
 
   else {
     answer =
-      `Hier sind die ${reports.length} gefundenen ${reports.length === 1 ? "Meldung" : "Meldungen"} für ${description}:\n\n`;
+      `Hier sind die ${reports.length} gefundenen Meldungen für die ${road}:\n\n`;
   }
 
-
   answer +=
-    formatReports(
-      preview
-    );
+    formatReports(preview);
 
-
-  if (
-    reports.length >
-    PREVIEW_SIZE
-  ) {
+  if (reports.length > PREVIEW_SIZE) {
     const remaining =
       reports.length -
       PREVIEW_SIZE;
 
     answer +=
-      `\n\nSchreib „Weiter“, um die weiteren ${remaining} ${remaining === 1 ? "Meldung" : "Meldungen"} anzuzeigen.`;
+      `\n\nSchreib „Weiter“, um die weiteren ${remaining} ${
+        remaining === 1
+          ? "Meldung"
+          : "Meldungen"
+      } anzuzeigen.`;
   }
-
 
   answer +=
     `\n\n${shortSourceLine(sources)}`;
-
 
   await sendLongText(
     from,
@@ -955,55 +794,115 @@ Das bedeutet nicht zwingend, dass dort keinerlei Verkehr besteht – nur, dass d
 
 
 // ======================================================
-// STRASSEN-API
+// ZWISCHENNACHRICHT
 // ======================================================
 
-async function getRoadTraffic(
+function createLoadingMessage(
+  road,
+  intent
+) {
+  if (intent.category === "roadworks") {
+    return `Klar, ich suche dir die aktuellen Baustellen auf der ${road} raus. Einen Moment …`;
+  }
+
+  if (intent.category === "closure") {
+    return `Klar, ich schaue nach aktuellen Sperrungen auf der ${road}. Einen Moment …`;
+  }
+
+  if (intent.category === "warning") {
+    return `Klar, ich prüfe die aktuellen Warnmeldungen für die ${road}. Einen Moment …`;
+  }
+
+  if (intent.show_all) {
+    return `Klar, ich suche dir alle aktuellen Meldungen für die ${road} raus. Einen Moment …`;
+  }
+
+  return `Klar, ich schaue nach, was aktuell auf der ${road} los ist. Einen Moment …`;
+}
+
+
+// ======================================================
+// VERKEHRSDATEN
+// ======================================================
+
+async function getTrafficFromProviders(
   road,
   category
 ) {
-  const endpoints = [];
+  const reports = [];
+  const sources = [];
 
+  const autobahn =
+    await getAutobahnTraffic(
+      road,
+      category
+    );
+
+  if (autobahn.reports.length) {
+    reports.push(
+      ...autobahn.reports
+    );
+
+    sources.push(
+      autobahn.source
+    );
+  }
+
+  return {
+    reports:
+      deduplicateReports(reports),
+
+    sources:
+      uniqueSources(sources)
+  };
+}
+
+
+// ======================================================
+// AUTOBAHN API
+// ======================================================
+
+async function getAutobahnTraffic(
+  road,
+  category
+) {
+  const categories = [];
 
   if (
     category === "all" ||
     category === "warning"
   ) {
-    endpoints.push([
-      "warning",
-      "Verkehrsmeldung"
+    categories.push([
+      "Warnung",
+      "warning"
     ]);
   }
-
 
   if (
     category === "all" ||
     category === "roadworks"
   ) {
-    endpoints.push([
-      "roadworks",
-      "Baustelle"
+    categories.push([
+      "Baustelle",
+      "roadworks"
     ]);
   }
-
 
   if (
     category === "all" ||
     category === "closure"
   ) {
-    endpoints.push([
-      "closure",
-      "Sperrung"
+    categories.push([
+      "Sperrung",
+      "closure"
     ]);
   }
 
-
   const reports = [];
 
-
   for (
-    const [endpoint, label]
-    of endpoints
+    const [label, endpoint]
+    of categories
   ) {
     try {
       const response =
@@ -1011,660 +910,83 @@ async function getRoadTraffic(
           `${AUTOBAHN_API}/${encodeURIComponent(road)}/services/${endpoint}`
         );
 
-
       if (!response.ok) {
+        console.error(
+          "Traffic API HTTP error:",
+          response.status,
+          road,
+          endpoint
+        );
+
         continue;
       }
-
 
       const json =
         await response.json();
 
-
       const list =
-        Array.isArray(
-          json[endpoint]
-        )
+        Array.isArray(json[endpoint])
           ? json[endpoint]
           : [];
 
-
-      for (
-        const item
-        of list
-      ) {
+      for (const item of list) {
         reports.push({
-          title:
-            buildAutobahnTitle(
-              item
-            ),
+          category: label,
 
-          category:
-            label,
+          title:
+            buildTrafficTitle(item),
 
           sourceId:
-            SOURCE_AUTOBAHN.id
+            SOURCE_AUTOBAHN.id,
+
+          sourceName:
+            SOURCE_AUTOBAHN.name
         });
       }
 
     } catch (error) {
       console.error(
-        "Autobahn API:",
+        "Traffic API error:",
+        road,
+        endpoint,
         error
       );
     }
   }
 
-
   return {
-    reports:
-      deduplicateReports(
-        reports
-      ),
-
-    sources:
-      reports.length
-        ? [SOURCE_AUTOBAHN]
-        : []
+    reports,
+    source:
+      SOURCE_AUTOBAHN
   };
 }
 
 
 // ======================================================
-// ORTSSUCHE NRW
+// AUTOBAHNLISTE
 // ======================================================
 
-async function searchLocationTraffic(
-  location,
-  road,
-  category,
-  env
-) {
-  const geo =
-    await geocodeGermany(
-      location,
-      env
-    );
-
-
-  if (!geo) {
-    return {
-      reports: [],
-      sources: []
-    };
-  }
-
-
-  const state =
-    geo.address?.state || "";
-
-
-  if (
-    !state
-      .toLowerCase()
-      .includes(
-        "nordrhein-westfalen"
-      )
-  ) {
-    // Falls zusätzlich eine nummerierte Straße
-    // vorhanden ist, diese trotzdem abfragen.
-
-    if (road) {
-      return await getRoadTraffic(
-        normalizeRoad(road),
-        category
-      );
-    }
-
-
-    return {
-      reports: [],
-      sources: [],
-      outsideNRW: true
-    };
-  }
-
-
-  const features =
-    await getNrwFeaturesAround(
-      Number(geo.lat),
-      Number(geo.lon),
-      12000
-    );
-
-
-  const identifiers =
-    features
-      .map(
-        feature =>
-          feature?.properties
-            ?.identifier
-      )
-      .filter(Boolean);
-
-
-  if (!identifiers.length) {
-    return {
-      reports: [],
-      sources: []
-    };
-  }
-
-
-  const details =
-    await getNrwDetails(
-      identifiers.slice(
-        0,
-        100
-      )
-    );
-
-
-  const displayTypeById =
-    new Map();
-
-
-  for (
-    const feature
-    of features
-  ) {
-    const id =
-      feature?.properties
-        ?.identifier;
-
-    if (id) {
-      displayTypeById.set(
-        id,
-        feature?.properties
-          ?.display_type || ""
-      );
-    }
-  }
-
-
-  let reports =
-    details.map(
-      detail => {
-        const displayType =
-          displayTypeById.get(
-            detail.identifier
-          ) || "";
-
-        return {
-          title:
-            buildNrwTitle(
-              detail
-            ),
-
-          category:
-            classifyNrwCategory(
-              displayType,
-              detail
-            ),
-
-          sourceId:
-            SOURCE_NRW.id
-        };
-      }
-    );
-
-
-  // Falls eine Straße wie B8 mitgegeben wurde,
-  // nur dazu passende Ergebnisse verwenden.
-
-  if (road) {
-    const wanted =
-      normalizeSearch(
-        normalizeRoad(road)
-      );
-
-    reports =
-      reports.filter(
-        report =>
-          normalizeSearch(
-            report.title
-          ).includes(
-            wanted
-          )
-      );
-  }
-
-
-  reports =
-    filterCategory(
-      reports,
-      category
-    );
-
-
-  const roadApi =
-    road
-      ? await getRoadTraffic(
-          normalizeRoad(road),
-          category
-        )
-      : {
-          reports: [],
-          sources: []
-        };
-
-
-  const combined =
-    deduplicateReports([
-      ...roadApi.reports,
-      ...reports
-    ]);
-
-
-  const sources =
-    uniqueSources([
-      ...roadApi.sources,
-      ...(reports.length
-        ? [SOURCE_NRW]
-        : [])
-    ]);
-
-
-  return {
-    reports:
-      combined,
-    sources
-  };
-}
-
-
-// ======================================================
-// NOMINATIM – NUR ORT → KOORDINATEN
-// ======================================================
-
-async function geocodeGermany(
-  query,
-  env
-) {
+async function getAvailableRoads() {
   try {
-    const url =
-      new URL(
-        NOMINATIM
-      );
-
-
-    url.searchParams.set(
-      "q",
-      query
-    );
-
-    url.searchParams.set(
-      "format",
-      "jsonv2"
-    );
-
-    url.searchParams.set(
-      "limit",
-      "1"
-    );
-
-    url.searchParams.set(
-      "countrycodes",
-      "de"
-    );
-
-    url.searchParams.set(
-      "addressdetails",
-      "1"
-    );
-
-
     const response =
       await fetch(
-        url.toString(),
-        {
-          headers: {
-            "Accept-Language":
-              "de",
-
-            "User-Agent":
-              env.CONTACT_EMAIL
-                ? `Paulis-Verkehrsservice/1.0 (${env.CONTACT_EMAIL})`
-                : "Paulis-Verkehrsservice/1.0"
-          }
-        }
+        `${AUTOBAHN_API}/`
       );
 
-
     if (!response.ok) {
-      return null;
+      return [];
     }
-
 
     const json =
       await response.json();
 
-
-    return Array.isArray(json)
-      ? json[0] || null
-      : null;
-
-  } catch (error) {
-    console.error(
-      "Geocoding:",
-      error
-    );
-
-    return null;
-  }
-}
-
-
-// ======================================================
-// VERKEHR.NRW WFS
-// ======================================================
-
-async function getNrwFeaturesAround(
-  lat,
-  lon,
-  radiusMeters
-) {
-  try {
-    const center =
-      toWebMercator(
-        lat,
-        lon
-      );
-
-
-    const minX =
-      center.x -
-      radiusMeters;
-
-    const minY =
-      center.y -
-      radiusMeters;
-
-    const maxX =
-      center.x +
-      radiusMeters;
-
-    const maxY =
-      center.y +
-      radiusMeters;
-
-
-    const url =
-      new URL(
-        NRW_WFS
-      );
-
-
-    url.searchParams.set(
-      "service",
-      "WFS"
-    );
-
-    url.searchParams.set(
-      "version",
-      "2.0.0"
-    );
-
-    url.searchParams.set(
-      "request",
-      "GetFeature"
-    );
-
-    url.searchParams.set(
-      "typenames",
-      NRW_WFS_TYPES.join(",")
-    );
-
-    url.searchParams.set(
-      "srsname",
-      "EPSG:900913"
-    );
-
-    url.searchParams.set(
-      "bbox",
-      `${minX},${minY},${maxX},${maxY},EPSG:900913`
-    );
-
-    url.searchParams.set(
-      "outputFormat",
-      "text/javascript"
-    );
-
-    url.searchParams.set(
-      "format_options",
-      "callback:verkehrCallback"
-    );
-
-
-    const response =
-      await fetch(
-        url.toString()
-      );
-
-
-    if (!response.ok) {
-      return [];
-    }
-
-
-    const text =
-      await response.text();
-
-
-    const json =
-      parseJsonp(
-        text
-      );
-
-
-    return Array.isArray(
-      json?.features
-    )
-      ? json.features
+    return Array.isArray(json.roads)
+      ? json.roads
       : [];
 
   } catch (error) {
     console.error(
-      "NRW WFS:",
-      error
-    );
-
-    return [];
-  }
-}
-
-
-// ======================================================
-// VERKEHR.NRW DETAILS
-// ======================================================
-
-async function getNrwDetails(
-  identifiers
-) {
-  const output = [];
-
-
-  for (
-    let i = 0;
-    i < identifiers.length;
-    i += 25
-  ) {
-    const chunk =
-      identifiers.slice(
-        i,
-        i + 25
-      );
-
-
-    try {
-      const body =
-        new URLSearchParams();
-
-      body.set(
-        "action",
-        "getTrafficObjectsByIdentifier"
-      );
-
-      body.set(
-        "identifier",
-        chunk.join("|")
-      );
-
-
-      const response =
-        await fetch(
-          NRW_DETAILS,
-          {
-            method: "POST",
-
-            headers: {
-              "Content-Type":
-                "application/x-www-form-urlencoded; charset=UTF-8"
-            },
-
-            body:
-              body.toString()
-          }
-        );
-
-
-      if (!response.ok) {
-        continue;
-      }
-
-
-      const json =
-        await response.json();
-
-
-      if (
-        Array.isArray(
-          json?.data
-        )
-      ) {
-        output.push(
-          ...json.data
-        );
-      }
-
-    } catch (error) {
-      console.error(
-        "NRW details:",
-        error
-      );
-    }
-  }
-
-
-  return output;
-}
-
-
-// ======================================================
-// TOP REISEZEITVERLUST NRW
-// ======================================================
-
-async function getTopTravelLossNRW() {
-  try {
-    const url =
-      new URL(
-        NRW_WFS
-      );
-
-
-    url.searchParams.set(
-      "service",
-      "WFS"
-    );
-
-    url.searchParams.set(
-      "version",
-      "2.0.0"
-    );
-
-    url.searchParams.set(
-      "request",
-      "GetFeature"
-    );
-
-    url.searchParams.set(
-      "typenames",
-      "vipnrw:traffic_abnormal_travel_time_loss_feature"
-    );
-
-    url.searchParams.set(
-      "srsname",
-      "EPSG:900913"
-    );
-
-    url.searchParams.set(
-      "outputFormat",
-      "text/javascript"
-    );
-
-    url.searchParams.set(
-      "format_options",
-      "callback:verkehrCallback"
-    );
-
-
-    const response =
-      await fetch(
-        url.toString()
-      );
-
-
-    if (!response.ok) {
-      return [];
-    }
-
-
-    const data =
-      parseJsonp(
-        await response.text()
-      );
-
-
-    const ids =
-      (data?.features || [])
-        .map(
-          f =>
-            f?.properties
-              ?.identifier
-        )
-        .filter(Boolean)
-        .slice(0, 100);
-
-
-    const details =
-      await getNrwDetails(
-        ids
-      );
-
-
-    return details
-      .map(
-        detail => ({
-          title:
-            buildNrwTitle(
-              detail
-            ),
-
-          minutes:
-            extractMinutes(
-              detail
-            )
-        })
-      )
-      .sort(
-        (a, b) =>
-          b.minutes -
-          a.minutes
-      );
-
-  } catch (error) {
-    console.error(
-      "Top traffic:",
+      "Road list error:",
       error
     );
 
@@ -1687,11 +1009,13 @@ async function sendRemaining(
       env
     );
 
-
-  if (!session) {
+  if (
+    !session ||
+    !Array.isArray(session.reports)
+  ) {
     await sendWhatsApp(
       from,
-`Ich habe gerade keine vorherige Liste gespeichert.
+`Ich habe gerade keine vorherige Verkehrsanfrage gespeichert, bei der ich weitermachen kann.
 
 Starte einfach eine neue Abfrage, zum Beispiel:
 
@@ -1702,38 +1026,130 @@ Starte einfach eine neue Abfrage, zum Beispiel:
     return;
   }
 
-
-  const remaining =
-    (session.reports || [])
-      .slice(
-        PREVIEW_SIZE
-      );
-
-
-  if (!remaining.length) {
+  if (session.allShown) {
     await sendWhatsApp(
       from,
-      `Bei deiner letzten Abfrage wurden bereits alle Meldungen angezeigt.`,
+      `Bei deiner letzten Abfrage wurden bereits alle gefundenen Meldungen angezeigt.`,
       env
     );
 
     return;
   }
 
+  const remaining =
+    session.reports.slice(
+      PREVIEW_SIZE
+    );
+
+  if (!remaining.length) {
+    session.allShown = true;
+
+    await saveSession(
+      from,
+      session,
+      env
+    );
+
+    await sendWhatsApp(
+      from,
+      `Bei deiner letzten Abfrage wurden bereits alle gefundenen Meldungen angezeigt.`,
+      env
+    );
+
+    return;
+  }
 
   await sendAllReports(
     from,
     remaining,
     session.sources || [],
-    `Hier sind die weiteren ${remaining.length} ${remaining.length === 1 ? "Meldung" : "Meldungen"} für ${session.description}:`,
+    `Hier sind die weiteren ${remaining.length} ${
+      remaining.length === 1
+        ? "Meldung"
+        : "Meldungen"
+    } für die ${session.road}:`,
     env
   );
 
+  // Session behalten, damit danach noch
+  // "Quellen" gefragt werden kann.
+  session.allShown = true;
 
-  await deleteSession(
+  await saveSession(
     from,
+    session,
     env
   );
+}
+
+
+// ======================================================
+// ALLE MELDUNGEN SENDEN
+// ======================================================
+
+async function sendAllReports(
+  from,
+  reports,
+  sources,
+  intro,
+  env
+) {
+  const chunks = [];
+
+  let current =
+    `${intro}\n\n`;
+
+  for (const report of reports) {
+    const line =
+      `• ${cleanText(report.title)}\n`;
+
+    if (
+      current.length +
+      line.length >
+      MAX_MESSAGE_LENGTH
+    ) {
+      if (current.trim()) {
+        chunks.push(
+          current.trim()
+        );
+      }
+
+      current = "";
+    }
+
+    current += line;
+  }
+
+  if (current.trim()) {
+    chunks.push(
+      current.trim()
+    );
+  }
+
+  for (
+    let i = 0;
+    i < chunks.length;
+    i++
+  ) {
+    let message =
+      chunks[i];
+
+    if (chunks.length > 1) {
+      message =
+        `Teil ${i + 1}/${chunks.length}\n\n${message}`;
+    }
+
+    if (i === chunks.length - 1) {
+      message +=
+        `\n\n${shortSourceLine(sources)}`;
+    }
+
+    await sendWhatsApp(
+      from,
+      message,
+      env
+    );
+  }
 }
 
 
@@ -1751,21 +1167,15 @@ async function answerSources(
       env
     );
 
-
   const sources =
     session?.sources?.length
       ? session.sources
-      : [
-          SOURCE_AUTOBAHN,
-          SOURCE_NRW
-        ];
+      : [SOURCE_AUTOBAHN];
 
+  let answer =
+`Meine Verkehrsmeldungen werden aus angebundenen Verkehrsdatenquellen abgerufen und nicht von der KI erfunden.
 
-  let text =
-`Die Verkehrsmeldungen werden aus angebundenen Verkehrsdatenquellen abgerufen und nicht von der KI erfunden.
-
-Verwendete bzw. verfügbare Verkehrsquellen:`;
-
+${sources.length === 1 ? "Datenquelle:" : "Datenquellen:"}`;
 
   for (
     let i = 0;
@@ -1775,28 +1185,26 @@ Verwendete bzw. verfügbare Verkehrsquellen:`;
     const source =
       sources[i];
 
-    text +=
+    answer +=
 `\n\n${i + 1}. ${source.name}
 Anbieter: ${source.provider}
 Webseite: ${source.website}
 Datendienst: ${source.dataUrl}`;
   }
 
-
-  text +=
-`\n\nDie KI wird hauptsächlich verwendet, um frei formulierte Nachrichten zu verstehen. Sie erzeugt keine eigenen Verkehrsmeldungen.`;
-
+  answer +=
+`\n\nDie KI hilft mir hauptsächlich dabei, normal formulierte Nachrichten zu verstehen. Aktuelle Verkehrsmeldungen werden aus den angebundenen Datenquellen abgerufen.`;
 
   await sendLongText(
     from,
-    text,
+    answer,
     env
   );
 }
 
 
 // ======================================================
-// BOT INFORMATION
+// WAS BIST DU? / ÜBER DEN BOT
 // ======================================================
 
 async function answerAbout(
@@ -1804,19 +1212,16 @@ async function answerAbout(
   text,
   env
 ) {
+
   if (
-    text.includes(
-      "normal sprechen"
-    ) ||
-    text.includes(
-      "normal mit dir"
-    )
+    text.includes("normal sprechen") ||
+    text.includes("normal mit dir")
   ) {
     await sendWhatsApp(
       from,
 `Ja, klar. Du kannst ganz normal mit mir schreiben.
 
-Ich bin hauptsächlich für Verkehrsinformationen gedacht, kann aber auch Fragen über meine Funktionen beantworten.`,
+Ich bin hauptsächlich für Verkehrsinformationen gedacht, kann aber auch Fragen über mich und meine Funktionen beantworten.`,
       env
     );
 
@@ -1825,15 +1230,43 @@ Ich bin hauptsächlich für Verkehrsinformationen gedacht, kann aber auch Fragen
 
 
   if (
-    text.includes(
-      "wer hat dich"
-    )
+    text.includes("was bist du") ||
+    text.includes("wer bist du")
   ) {
     await sendWhatsApp(
       from,
-`Ich bin der Verkehrsbot von Paulis Verkehrsservice.
+`Ich bin ein von Pauli Schuberth erstellter Verkehrsbot und helfe dir bei Fragen zum Straßenverkehr in Deutschland.
 
-Ich laufe über Cloudflare Workers und WhatsApp und greife für Verkehrsinformationen auf angebundene Verkehrsdatenquellen zu.`,
+Ich kann aktuelle Verkehrsmeldungen zu Autobahnen abrufen und dir zum Beispiel Informationen über Staus, Baustellen, Sperrungen und andere Verkehrsstörungen anzeigen.
+
+Für Bundesstraßen, Landes- und Staatsstraßen sowie Stadt- und Nebenstraßen stehen mir derzeit noch nicht ausreichend Verkehrs- und Vergleichsdaten zur Verfügung, um überall zuverlässige Auskünfte geben zu können.
+
+Wenn du wissen möchtest, woher meine Verkehrsdaten stammen, schreib einfach „Quellen“.
+
+Du kannst mich zum Beispiel fragen:
+
+„Was ist auf der A46 los?“
+
+„Gibt es Baustellen auf der A3?“
+
+„Zeig mir alle Meldungen auf der A40.“`,
+      env
+    );
+
+    return;
+  }
+
+
+  if (
+    text.includes("wer hat dich erstellt") ||
+    text.includes("wer hat dich gemacht") ||
+    text.includes("von wem wurdest du erstellt")
+  ) {
+    await sendWhatsApp(
+      from,
+`Ich wurde von Pauli Schuberth als Verkehrsbot erstellt.
+
+Ich soll dabei helfen, aktuelle Verkehrsinformationen einfach über WhatsApp abzufragen.`,
       env
     );
 
@@ -1844,24 +1277,23 @@ Ich laufe über Cloudflare Workers und WhatsApp und greife für Verkehrsinformat
   let answer =
 `Ich bin ein WhatsApp-Verkehrsbot.
 
-Technisch verwende ich:
+Technisch nutze ich unter anderem:
 
 • Cloudflare Workers
 • WhatsApp Cloud API
-• Cloudflare Workers AI zum Sprachverständnis
-• Autobahn GmbH Verkehrsdaten
-• VERKEHR.NRW Verkehrsdaten
+• Cloudflare Workers AI zum Verstehen frei formulierter Nachrichten
+• angebundene Verkehrsdatenquellen
 
-Verkehrsmeldungen werden aus den Datenquellen abgerufen und nicht von der KI erfunden.`;
+Die KI dient hauptsächlich dazu, deine Anfrage zu verstehen.
 
+Aktuelle Verkehrsmeldungen werden aus den angebundenen Verkehrsdatenquellen abgerufen und nicht von der KI erfunden.
 
-  if (
-    env.CONTACT_EMAIL
-  ) {
+Wenn du meine Datenquellen sehen möchtest, schreib „Quellen“.`;
+
+  if (env.CONTACT_EMAIL) {
     answer +=
-      `\n\nBei Fragen:\n${env.CONTACT_EMAIL}`;
+      `\n\nBei Fragen oder Problemen:\n${env.CONTACT_EMAIL}`;
   }
-
 
   await sendWhatsApp(
     from,
@@ -1880,6 +1312,16 @@ async function normalChat(
   text,
   env
 ) {
+  if (!env.AI) {
+    await sendWhatsApp(
+      from,
+      `Du kannst mir ganz normal schreiben. Für aktuelle Verkehrsdaten nenn mir am besten eine Autobahn, zum Beispiel A46.`,
+      env
+    );
+
+    return;
+  }
+
   try {
     const result =
       await env.AI.run(
@@ -1889,22 +1331,40 @@ async function normalChat(
             {
               role: "system",
               content: `
-Du bist der freundliche Assistent eines
-deutschen WhatsApp-Verkehrsbots.
+Du bist der freundliche Assistent von
+Paulis Verkehrsservice.
 
-Antworte kurz und natürlich auf Deutsch.
+Du bist ein WhatsApp-Verkehrsbot.
 
-Der Nutzer kann ganz normal mit dir sprechen.
+Antworte kurz, natürlich und auf Deutsch.
 
-WICHTIG:
+Der Nutzer darf ganz normal mit dir
+sprechen und einfache Fragen stellen.
 
-Erfinde niemals aktuelle Verkehrsdaten.
+Wenn der Nutzer aktuelle Verkehrsdaten,
+Staus, Baustellen, Sperrungen oder
+Verkehrsstörungen wissen möchte,
+darfst du diese niemals aus deinem
+KI-Wissen beantworten oder erfinden.
 
-Wenn der Nutzer aktuelle Staus,
-Baustellen, Sperrungen oder sonstige
-Verkehrsdaten wissen möchte, bitte ihn,
-Straße oder Ort zu nennen, damit die
-echten Datenquellen abgefragt werden.
+Bitte den Nutzer stattdessen, eine
+Autobahn zu nennen, damit die echte
+Verkehrsdatenquelle abgefragt werden kann.
+
+Für Bundesstraßen, Landes- und
+Staatsstraßen sowie Stadt- und
+Nebenstraßen stehen derzeit noch nicht
+ausreichend Verkehrs- und Vergleichsdaten
+zur Verfügung, um überall zuverlässige
+Auskünfte geben zu können.
+
+Wenn du nach deiner Aufgabe gefragt wirst,
+erkläre, dass du bei Fragen zum
+Straßenverkehr in Deutschland hilfst.
+
+Behaupte niemals, Daten abgerufen zu
+haben, wenn keine Datenquelle abgefragt
+wurde.
 `
             },
 
@@ -1916,13 +1376,10 @@ echten Datenquellen abgefragt werden.
         }
       );
 
-
     const answer =
-      typeof result?.response ===
-      "string"
-        ? result.response
-        : "Du kannst mir ganz normal schreiben. Für aktuelle Verkehrsdaten nenn mir am besten eine Straße oder einen Ort.";
-
+      typeof result?.response === "string"
+        ? result.response.trim()
+        : `Du kannst mir ganz normal schreiben. Für aktuelle Verkehrsdaten nenn mir am besten eine Autobahn.`;
 
     await sendWhatsApp(
       from,
@@ -1932,14 +1389,13 @@ echten Datenquellen abgefragt werden.
 
   } catch (error) {
     console.error(
-      "Normal chat:",
+      "Normal chat error:",
       error
     );
 
-
     await sendWhatsApp(
       from,
-      `Du kannst mir ganz normal schreiben. Für Verkehrsdaten nenn mir am besten eine Straße oder einen Ort.`,
+      `Du kannst mir ganz normal schreiben. Für aktuelle Verkehrsdaten nenn mir am besten eine Autobahn.`,
       env
     );
   }
@@ -1947,100 +1403,18 @@ echten Datenquellen abgefragt werden.
 
 
 // ======================================================
-// MELDUNGEN SENDEN
-// ======================================================
-
-async function sendAllReports(
-  from,
-  reports,
-  sources,
-  intro,
-  env
-) {
-  const chunks = [];
-
-  let current =
-    `${intro}\n\n`;
-
-
-  for (
-    const report
-    of reports
-  ) {
-    const line =
-      `• ${cleanText(report.title)}\n`;
-
-
-    if (
-      current.length +
-      line.length >
-      MAX_WHATSAPP_LENGTH
-    ) {
-      chunks.push(
-        current.trim()
-      );
-
-      current = "";
-    }
-
-
-    current +=
-      line;
-  }
-
-
-  if (
-    current.trim()
-  ) {
-    chunks.push(
-      current.trim()
-    );
-  }
-
-
-  for (
-    let i = 0;
-    i < chunks.length;
-    i++
-  ) {
-    let text =
-      chunks[i];
-
-
-    if (
-      chunks.length > 1
-    ) {
-      text =
-        `Teil ${i + 1}/${chunks.length}\n\n${text}`;
-    }
-
-
-    if (
-      i ===
-      chunks.length - 1
-    ) {
-      text +=
-        `\n\n${shortSourceLine(sources)}`;
-    }
-
-
-    await sendWhatsApp(
-      from,
-      text,
-      env
-    );
-  }
-}
-
-
-// ======================================================
-// SESSION – CLOUDFLARE KV
-// Binding muss SESSIONS heißen.
+// KV SESSION
+//
+// Cloudflare Binding:
+// SESSIONS
+//
+// Namespace:
+// verkehrsapi1-sessions
 // ======================================================
 
 async function saveSession(
   from,
-  value,
+  session,
   env
 ) {
   if (!env.SESSIONS) {
@@ -2051,15 +1425,22 @@ async function saveSession(
     return;
   }
 
+  try {
+    await env.SESSIONS.put(
+      `wa:${from}`,
+      JSON.stringify(session),
+      {
+        // 30 Minuten
+        expirationTtl: 1800
+      }
+    );
 
-  await env.SESSIONS.put(
-    `wa:${from}`,
-    JSON.stringify(value),
-    {
-      expirationTtl:
-        1800
-    }
-  );
+  } catch (error) {
+    console.error(
+      "Session save error:",
+      error
+    );
+  }
 }
 
 
@@ -2071,31 +1452,219 @@ async function loadSession(
     return null;
   }
 
+  try {
+    return await env.SESSIONS.get(
+      `wa:${from}`,
+      "json"
+    );
 
-  return await env.SESSIONS.get(
-    `wa:${from}`,
-    "json"
+  } catch (error) {
+    console.error(
+      "Session load error:",
+      error
+    );
+
+    return null;
+  }
+}
+
+
+// ======================================================
+// MELDUNG FORMATIEREN
+// ======================================================
+
+function buildTrafficTitle(item) {
+  const parts = [];
+
+  if (item.title) {
+    parts.push(item.title);
+  }
+
+  if (
+    item.subtitle &&
+    item.subtitle !== item.title
+  ) {
+    parts.push(item.subtitle);
+  }
+
+  if (
+    Array.isArray(item.description)
+  ) {
+    const description =
+      item.description
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(" ");
+
+    if (description) {
+      parts.push(description);
+    }
+  }
+
+  return cleanText(
+    parts.join(" – ") ||
+    "Verkehrsmeldung"
   );
 }
 
 
-async function deleteSession(
-  from,
-  env
-) {
-  if (!env.SESSIONS) {
-    return;
+function formatReports(reports) {
+  return reports
+    .map(
+      report =>
+        `• ${cleanText(report.title)}`
+    )
+    .join("\n");
+}
+
+
+// ======================================================
+// QUELLENZEILE
+// ======================================================
+
+function shortSourceLine(sources) {
+  if (
+    !sources ||
+    !sources.length
+  ) {
+    return "Quelle: angebundene Verkehrsdatenquelle";
   }
 
+  if (sources.length === 1) {
+    return `Quelle: ${sources[0].name}`;
+  }
 
-  await env.SESSIONS.delete(
-    `wa:${from}`
+  return (
+    "Quellen: " +
+    sources
+      .map(
+        source =>
+          source.name
+      )
+      .join(", ")
   );
 }
 
 
 // ======================================================
-// WHATSAPP
+// DUPLIKATE
+// ======================================================
+
+function deduplicateReports(reports) {
+  const seen = new Set();
+  const result = [];
+
+  for (const report of reports) {
+    const key =
+      normalizeSearch(
+        report.title
+      );
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    result.push(report);
+  }
+
+  return result;
+}
+
+
+function uniqueSources(sources) {
+  const map = new Map();
+
+  for (const source of sources) {
+    map.set(
+      source.id,
+      source
+    );
+  }
+
+  return [...map.values()];
+}
+
+
+// ======================================================
+// LANGE WHATSAPP-NACHRICHTEN
+// ======================================================
+
+async function sendLongText(
+  to,
+  text,
+  env
+) {
+  if (
+    text.length <=
+    MAX_MESSAGE_LENGTH
+  ) {
+    await sendWhatsApp(
+      to,
+      text,
+      env
+    );
+
+    return;
+  }
+
+  const lines =
+    text.split("\n");
+
+  const chunks = [];
+  let current = "";
+
+  for (const line of lines) {
+    const addition =
+      `${line}\n`;
+
+    if (
+      current.length +
+      addition.length >
+      MAX_MESSAGE_LENGTH
+    ) {
+      if (current.trim()) {
+        chunks.push(
+          current.trim()
+        );
+      }
+
+      current = "";
+    }
+
+    current += addition;
+  }
+
+  if (current.trim()) {
+    chunks.push(
+      current.trim()
+    );
+  }
+
+  for (
+    let i = 0;
+    i < chunks.length;
+    i++
+  ) {
+    let message =
+      chunks[i];
+
+    if (chunks.length > 1) {
+      message =
+        `Teil ${i + 1}/${chunks.length}\n\n${message}`;
+    }
+
+    await sendWhatsApp(
+      to,
+      message,
+      env
+    );
+  }
+}
+
+
+// ======================================================
+// WHATSAPP SENDEN
 // ======================================================
 
 async function sendWhatsApp(
@@ -2103,6 +1672,17 @@ async function sendWhatsApp(
   text,
   env
 ) {
+  if (
+    !env.WHATSAPP_TOKEN ||
+    !env.PHONE_NUMBER_ID
+  ) {
+    console.error(
+      "WHATSAPP_TOKEN oder PHONE_NUMBER_ID fehlt."
+    );
+
+    return;
+  }
+
   const response =
     await fetch(
       `https://graph.facebook.com/${GRAPH_VERSION}/${env.PHONE_NUMBER_ID}/messages`,
@@ -2131,24 +1711,20 @@ async function sendWhatsApp(
               "text",
 
             text: {
-              preview_url:
-                false,
-
-              body:
-                String(text).slice(
-                  0,
-                  4000
-                )
+              preview_url: false,
+              body: String(text)
             }
           })
       }
     );
 
-
   if (!response.ok) {
+    const error =
+      await response.text();
+
     console.error(
-      "WhatsApp:",
-      await response.text()
+      "WhatsApp send error:",
+      error
     );
   }
 }
@@ -2158,437 +1734,7 @@ async function sendWhatsApp(
 // HELFER
 // ======================================================
 
-function createLoadingText(
-  target,
-  intent
-) {
-  if (
-    intent.category ===
-    "roadworks"
-  ) {
-    return `Klar, ich suche dir die aktuellen Baustellen für ${target} raus. Einen Moment …`;
-  }
-
-
-  if (
-    intent.category ===
-    "closure"
-  ) {
-    return `Klar, ich schaue nach aktuellen Sperrungen für ${target}. Einen Moment …`;
-  }
-
-
-  if (
-    intent.show_all
-  ) {
-    return `Klar, ich suche dir alle aktuellen Meldungen für ${target} raus. Einen Moment …`;
-  }
-
-
-  return `Klar, ich schaue nach, was aktuell bei ${target} los ist. Einen Moment …`;
-}
-
-
-function buildAutobahnTitle(
-  item
-) {
-  const parts = [];
-
-
-  if (item.title) {
-    parts.push(item.title);
-  }
-
-
-  if (
-    item.subtitle &&
-    item.subtitle !== item.title
-  ) {
-    parts.push(item.subtitle);
-  }
-
-
-  if (
-    Array.isArray(
-      item.description
-    )
-  ) {
-    const description =
-      item.description
-        .filter(Boolean)
-        .slice(-2)
-        .join(" ");
-
-    if (description) {
-      parts.push(
-        description
-      );
-    }
-  }
-
-
-  return cleanText(
-    parts.join(" – ") ||
-    "Verkehrsmeldung"
-  );
-}
-
-
-function buildNrwTitle(
-  item
-) {
-  const parts = [];
-
-
-  if (item.title) {
-    parts.push(item.title);
-  }
-
-
-  if (
-    item.subtitle &&
-    item.subtitle !==
-      item.title
-  ) {
-    parts.push(item.subtitle);
-  }
-
-
-  if (
-    Array.isArray(
-      item.description
-    )
-  ) {
-    const description =
-      item.description
-        .filter(Boolean)
-        .join(" ");
-
-    if (description) {
-      parts.push(
-        description
-      );
-    }
-  }
-
-
-  if (
-    !parts.length &&
-    Array.isArray(
-      item.footer
-    )
-  ) {
-    parts.push(
-      ...item.footer
-    );
-  }
-
-
-  return cleanText(
-    parts.join(" – ") ||
-    "Verkehrsmeldung"
-  );
-}
-
-
-function classifyNrwCategory(
-  displayType,
-  item
-) {
-  const value =
-    `${displayType} ${JSON.stringify(item)}`
-      .toUpperCase();
-
-
-  if (
-    value.includes("ROADWORK")
-  ) {
-    return "Baustelle";
-  }
-
-
-  if (
-    value.includes("CLOSURE") ||
-    value.includes("BLOCK")
-  ) {
-    return "Sperrung";
-  }
-
-
-  if (
-    value.includes("CONGESTION") ||
-    value.includes("TRAVEL_TIME")
-  ) {
-    return "Stau";
-  }
-
-
-  return "Verkehrsmeldung";
-}
-
-
-function filterCategory(
-  reports,
-  category
-) {
-  if (
-    category === "all"
-  ) {
-    return reports;
-  }
-
-
-  if (
-    category === "roadworks"
-  ) {
-    return reports.filter(
-      r =>
-        r.category ===
-        "Baustelle"
-    );
-  }
-
-
-  if (
-    category === "closure"
-  ) {
-    return reports.filter(
-      r =>
-        r.category ===
-        "Sperrung"
-    );
-  }
-
-
-  return reports;
-}
-
-
-function formatReports(
-  reports
-) {
-  return reports
-    .map(
-      r =>
-        `• ${cleanText(r.title)}`
-    )
-    .join("\n");
-}
-
-
-function shortSourceLine(
-  sources
-) {
-  if (!sources.length) {
-    return "Quelle: angebundene Verkehrsdatenquelle";
-  }
-
-
-  if (
-    sources.length === 1
-  ) {
-    return `Quelle: ${sources[0].name}`;
-  }
-
-
-  return (
-    "Quellen: " +
-    sources
-      .map(
-        source =>
-          source.name
-      )
-      .join(", ")
-  );
-}
-
-
-function deduplicateReports(
-  reports
-) {
-  const seen =
-    new Set();
-
-  const result = [];
-
-
-  for (
-    const report
-    of reports
-  ) {
-    const key =
-      normalizeSearch(
-        report.title
-      );
-
-
-    if (
-      seen.has(key)
-    ) {
-      continue;
-    }
-
-
-    seen.add(key);
-
-    result.push(
-      report
-    );
-  }
-
-
-  return result;
-}
-
-
-function uniqueSources(
-  sources
-) {
-  const map =
-    new Map();
-
-
-  for (
-    const source
-    of sources
-  ) {
-    map.set(
-      source.id,
-      source
-    );
-  }
-
-
-  return [
-    ...map.values()
-  ];
-}
-
-
-function extractMinutes(
-  item
-) {
-  const text =
-    JSON.stringify(item);
-
-
-  const matches =
-    [
-      ...text.matchAll(
-        /(\d{1,3})\s*(?:min|minuten)/gi
-      )
-    ];
-
-
-  let highest = 0;
-
-
-  for (
-    const match
-    of matches
-  ) {
-    highest =
-      Math.max(
-        highest,
-        Number(
-          match[1]
-        )
-      );
-  }
-
-
-  if (
-    typeof item?.impact?.lower ===
-    "number"
-  ) {
-    highest =
-      Math.max(
-        highest,
-        item.impact.lower
-      );
-  }
-
-
-  if (
-    typeof item?.impact?.upper ===
-    "number"
-  ) {
-    highest =
-      Math.max(
-        highest,
-        item.impact.upper
-      );
-  }
-
-
-  return highest;
-}
-
-
-function toWebMercator(
-  lat,
-  lon
-) {
-  const x =
-    lon *
-    20037508.34 /
-    180;
-
-
-  let y =
-    Math.log(
-      Math.tan(
-        (90 + lat) *
-        Math.PI /
-        360
-      )
-    ) /
-    (Math.PI / 180);
-
-
-  y =
-    y *
-    20037508.34 /
-    180;
-
-
-  return {
-    x,
-    y
-  };
-}
-
-
-function parseJsonp(
-  text
-) {
-  const first =
-    text.indexOf("(");
-
-  const last =
-    text.lastIndexOf(")");
-
-
-  if (
-    first === -1 ||
-    last === -1
-  ) {
-    return null;
-  }
-
-
-  return JSON.parse(
-    text.slice(
-      first + 1,
-      last
-    )
-  );
-}
-
-
-function normalizeInput(
-  text
-) {
+function normalizeInput(text) {
   return String(text)
     .toLowerCase()
     .replace(/[?!.,;:]/g, " ")
@@ -2597,19 +1743,18 @@ function normalizeInput(
 }
 
 
-function normalizeSearch(
-  text
-) {
+function normalizeSearch(text) {
   return String(text)
     .toUpperCase()
     .replace(/\s+/g, "")
-    .replace(/[^\p{L}\p{N}]/gu, "");
+    .replace(
+      /[^\p{L}\p{N}]/gu,
+      ""
+    );
 }
 
 
-function normalizeRoad(
-  road
-) {
+function normalizeRoad(road) {
   return String(road)
     .toUpperCase()
     .replace(/\s+/g, "")
@@ -2617,22 +1762,19 @@ function normalizeRoad(
 }
 
 
-function cleanText(
-  value
-) {
+function cleanText(value) {
   return String(value)
     .replace(/\s+/g, " ")
     .trim()
-    .slice(
-      0,
-      900
-    );
+    .slice(0, 800);
 }
 
 
-function isSourceQuestion(
-  text
-) {
+// ======================================================
+// QUELLENFRAGEN ERKENNEN
+// ======================================================
+
+function isSourceQuestion(text) {
   return (
     text === "quelle" ||
     text === "quellen" ||
@@ -2646,19 +1788,36 @@ function isSourceQuestion(
       "welche quelle"
     ) ||
     text.includes(
+      "welche quellen"
+    ) ||
+    text.includes(
       "welche api"
     ) ||
     text.includes(
+      "welche apis"
+    ) ||
+    text.includes(
       "sind die daten erfunden"
+    ) ||
+    text.includes(
+      "sind die meldungen erfunden"
     )
   );
 }
 
 
-function isAboutQuestion(
-  text
-) {
+// ======================================================
+// BOT-FRAGEN ERKENNEN
+// ======================================================
+
+function isAboutQuestion(text) {
   return (
+    text.includes(
+      "was bist du"
+    ) ||
+    text.includes(
+      "wer bist du"
+    ) ||
     text.includes(
       "wer hat dich erstellt"
     ) ||
@@ -2666,7 +1825,7 @@ function isAboutQuestion(
       "wer hat dich gemacht"
     ) ||
     text.includes(
-      "wer bist du"
+      "von wem wurdest du erstellt"
     ) ||
     text.includes(
       "wie funktionierst du"
@@ -2681,82 +1840,4 @@ function isAboutQuestion(
       "normal mit dir"
     )
   );
-}
-
-
-async function sendLongText(
-  to,
-  text,
-  env
-) {
-  if (
-    text.length <=
-    MAX_WHATSAPP_LENGTH
-  ) {
-    await sendWhatsApp(
-      to,
-      text,
-      env
-    );
-
-    return;
-  }
-
-
-  const paragraphs =
-    text.split("\n");
-
-  let current = "";
-
-  const chunks = [];
-
-
-  for (
-    const paragraph
-    of paragraphs
-  ) {
-    const addition =
-      `${paragraph}\n`;
-
-
-    if (
-      current.length +
-      addition.length >
-      MAX_WHATSAPP_LENGTH
-    ) {
-      chunks.push(
-        current.trim()
-      );
-
-      current = "";
-    }
-
-
-    current +=
-      addition;
-  }
-
-
-  if (
-    current.trim()
-  ) {
-    chunks.push(
-      current.trim()
-    );
-  }
-
-
-  for (
-    let i = 0;
-    i < chunks.length;
-    i++
-  ) {
-    await sendWhatsApp(
-      to,
-      chunks.length > 1
-        ? `Teil ${i + 1}/${chunks.length}\n\n${chunks[i]}`
-        : chunks[i],
-      env
-    );
-  }
 }
