@@ -3,7 +3,7 @@ const GRAPH_VERSION = "v26.0";
 
 const AUTOBAHN_API = "https://verkehr.autobahn.de/o/autobahn";
 
-const PREVIEW_SIZE = 7;
+const PREVIEW_SIZE = 9;
 const MAX_MESSAGE_LENGTH = 3800;
 
 const SOURCE_AUTOBAHN = {
@@ -31,7 +31,6 @@ export default {
       });
     }
 
-    // Meta Webhook-Verifizierung
     if (request.method === "GET") {
       const mode = url.searchParams.get("hub.mode");
       const token = url.searchParams.get("hub.verify_token");
@@ -51,7 +50,6 @@ export default {
       });
     }
 
-    // Eingehende WhatsApp-Nachricht
     if (request.method === "POST") {
       let body;
 
@@ -96,7 +94,6 @@ async function handleWhatsApp(body, env) {
     if (!message) return;
 
     const from = message.from;
-
     if (!from) return;
 
     const text =
@@ -105,21 +102,17 @@ async function handleWhatsApp(body, env) {
     if (!text) {
       await sendWhatsApp(
         from,
-        `Du kannst mir einfach ganz normal schreiben.
+        `Du kannst mir einfach eine Nachricht schreiben.
 
-Zum Beispiel:
+Du kannst mich zum Beispiel fragen:
 
 „Was ist auf der A46 los?“
-
-„Baustellen A3“
-
-„Alle Meldungen A40“
-
+„Welche Baustellen gibt es auf der A3?“
+„Gibt es Sperrungen auf der A40?“
+„Zeig mir alle Meldungen auf der A57.“
 „Woher hast du deine Daten?“
 
-„Was bist du?“
-
-Oder schreib „Hilfe“.`,
+Du kannst deine Frage auch ganz normal formulieren.`,
         env
       );
 
@@ -148,10 +141,8 @@ Oder schreib „Hilfe“.`,
       return;
     }
 
-    // Erst ohne KI versuchen
     let intent = simpleParser(text);
 
-    // Falls nötig KI verwenden
     if (!intent) {
       intent = await understandWithAI(
         text,
@@ -186,7 +177,8 @@ function simpleParser(text) {
     t === "hilfe" ||
     t === "help" ||
     t.includes("was kann ich fragen") ||
-    t.includes("was kannst du")
+    t.includes("was kannst du") ||
+    t.includes("beispiele")
   ) {
     return {
       action: "help"
@@ -213,7 +205,6 @@ function simpleParser(text) {
     };
   }
 
-  // A46, A 46, B8, L381 usw.
   const match =
     t.match(
       /\b(a|b|l|st|s|k)\s*(\d{1,4})\b/i
@@ -228,21 +219,15 @@ function simpleParser(text) {
 
   let category = "all";
 
-  if (
-    /baustell|bauarbeiten/.test(t)
-  ) {
+  if (/baustell|bauarbeiten/.test(t)) {
     category = "roadworks";
   }
 
-  if (
-    /sperr|gesperrt|vollsperr/.test(t)
-  ) {
+  if (/sperr|gesperrt|vollsperr/.test(t)) {
     category = "closure";
   }
 
-  if (
-    /warn|gefahr/.test(t)
-  ) {
+  if (/warn|gefahr/.test(t)) {
     category = "warning";
   }
 
@@ -266,7 +251,7 @@ function simpleParser(text) {
 
 
 // ======================================================
-// WORKERS AI – ANFRAGE VERSTEHEN
+// KI-PARSER
 // ======================================================
 
 async function understandWithAI(text, env) {
@@ -337,24 +322,11 @@ show_all:
 true, wenn ausdrücklich alle Meldungen
 angefordert werden.
 
-Beispiele:
+Wenn der Nutzer normal mit dem Bot spricht,
+verwende action "chat".
 
-"Alle Meldungen A46"
-"Sende mir alle Meldungen auf der A3"
-"Zeig mir alles auf der A7"
-
-Wenn der Nutzer einfach normal mit dem
-Bot spricht und keine Verkehrsdaten
-anfordert, verwende action "chat".
-
-WICHTIG:
-
-Die KI darf keine aktuelle Verkehrslage
-aus ihrem eigenen Wissen beantworten.
-
-Aktuelle Verkehrsinformationen müssen
-immer aus einer angebundenen
-Verkehrsdatenquelle stammen.
+Aktuelle Verkehrsinformationen dürfen
+niemals von der KI erfunden werden.
 
 Antworte ausschließlich als JSON.
 `
@@ -376,18 +348,15 @@ Antworte ausschließlich als JSON.
       return normalizeIntent(response);
     }
 
-    if (
-      typeof response === "string"
-    ) {
+    if (typeof response === "string") {
       response = response
         .replace(/```json/gi, "")
         .replace(/```/g, "")
         .trim();
 
-      const parsed =
-        JSON.parse(response);
-
-      return normalizeIntent(parsed);
+      return normalizeIntent(
+        JSON.parse(response)
+      );
     }
 
   } catch (error) {
@@ -452,7 +421,7 @@ function normalizeIntent(intent) {
 
 
 // ======================================================
-// INTENT VERARBEITEN
+// ANFRAGE VERARBEITEN
 // ======================================================
 
 async function processIntent(
@@ -465,29 +434,22 @@ async function processIntent(
   // HILFE
   if (intent.action === "help") {
     let answer =
-`Du kannst mir ganz normal schreiben.
-
-Zum Beispiel:
+`Du kannst mich zum Beispiel fragen:
 
 „Was ist auf der A46 los?“
-
 „Welche Baustellen gibt es auf der A3?“
-
 „Gibt es Sperrungen auf der A40?“
-
-„Alle Meldungen A57“
-
+„Zeig mir alle Meldungen auf der A57.“
 „Welche Autobahnen kannst du abfragen?“
-
 „Woher hast du deine Daten?“
-
 „Was bist du?“
 
-Wenn zunächst nur fünf Meldungen angezeigt werden,
-kannst du anschließend „Weiter“ schreiben.
+Wenn mehr als neun Meldungen gefunden werden,
+zeige ich dir zunächst die ersten neun.
+Danach kannst du „Weiter“ schreiben.
 
-Du musst keinen bestimmten Befehl verwenden.
-Normale Formulierungen und kleinere Tippfehler sind okay.`;
+Du kannst deine Frage ganz normal formulieren.
+Du musst keinen bestimmten Befehl verwenden.`;
 
     if (env.CONTACT_EMAIL) {
       answer +=
@@ -508,22 +470,17 @@ Normale Formulierungen und kleinere Tippfehler sind okay.`;
   if (intent.action === "commands") {
     await sendWhatsApp(
       from,
-`Mögliche Abfragen:
+`Du kannst mich zum Beispiel fragen:
 
-• A46
-• Verkehr A46
-• Baustellen A3
-• Sperrungen A40
-• Warnungen A1
-• Alle Meldungen A57
-• Weiter
-• Welche Autobahnen kannst du abfragen?
-• Quellen
-• Was bist du?
-• Wie funktionierst du?
-• Hilfe
+„Was ist auf der A46 los?“
+„Welche Baustellen gibt es auf der A3?“
+„Gibt es Sperrungen auf der A40?“
+„Zeig mir alle Meldungen auf der A57.“
+„Welche Autobahnen kannst du abfragen?“
+„Woher hast du deine Daten?“
+„Wie funktionierst du?“
 
-Du kannst die Fragen auch ganz anders formulieren.`,
+Du kannst deine Frage auch ganz anders formulieren.`,
       env
     );
 
@@ -628,7 +585,8 @@ Autobahnen kann ich bereits direkt abfragen.`,
     normalizeRoad(intent.road);
 
 
-  // NOCH NICHT AUSREICHEND UNTERSTÜTZTE STRASSEN
+  // DERZEIT KEINE ZUVERLÄSSIGE FLÄCHENDECKUNG
+  // FÜR ANDERE STRASSENKLASSEN
   if (!road.startsWith("A")) {
     await sendWhatsApp(
       from,
@@ -644,7 +602,6 @@ Für Autobahnen kann ich bereits aktuelle Verkehrsmeldungen abrufen.`,
   }
 
 
-  // ZWISCHENNACHRICHT
   await sendWhatsApp(
     from,
     createLoadingMessage(
@@ -655,7 +612,6 @@ Für Autobahnen kann ich bereits aktuelle Verkehrsmeldungen abrufen.`,
   );
 
 
-  // DATEN ABRUFEN
   const result =
     await getTrafficFromProviders(
       road,
@@ -669,6 +625,7 @@ Für Autobahnen kann ich bereits aktuelle Verkehrsmeldungen abrufen.`,
     result.sources;
 
 
+  // KEINE MELDUNGEN
   if (!reports.length) {
     await saveSession(
       from,
@@ -729,7 +686,7 @@ ${shortSourceLine(
   }
 
 
-  // NORMALE VORSCHAU
+  // SESSION SPEICHERN
   await saveSession(
     from,
     {
@@ -742,6 +699,7 @@ ${shortSourceLine(
     },
     env
   );
+
 
   const preview =
     reports.slice(
@@ -794,7 +752,7 @@ ${shortSourceLine(
 
 
 // ======================================================
-// ZWISCHENNACHRICHT
+// LADE-NACHRICHT
 // ======================================================
 
 function createLoadingMessage(
@@ -859,7 +817,7 @@ async function getTrafficFromProviders(
 
 
 // ======================================================
-// AUTOBAHN API
+// AUTOBAHN-API
 // ======================================================
 
 async function getAutobahnTraffic(
@@ -963,7 +921,7 @@ async function getAutobahnTraffic(
 
 
 // ======================================================
-// AUTOBAHNLISTE
+// VERFÜGBARE AUTOBAHNEN
 // ======================================================
 
 async function getAvailableRoads() {
@@ -1017,9 +975,9 @@ async function sendRemaining(
       from,
 `Ich habe gerade keine vorherige Verkehrsanfrage gespeichert, bei der ich weitermachen kann.
 
-Starte einfach eine neue Abfrage, zum Beispiel:
+Du kannst mich zum Beispiel fragen:
 
-„A46“`,
+„Was ist auf der A46 los?“`,
       env
     );
 
@@ -1071,8 +1029,6 @@ Starte einfach eine neue Abfrage, zum Beispiel:
     env
   );
 
-  // Session behalten, damit danach noch
-  // "Quellen" gefragt werden kann.
   session.allShown = true;
 
   await saveSession(
@@ -1084,7 +1040,7 @@ Starte einfach eine neue Abfrage, zum Beispiel:
 
 
 // ======================================================
-// ALLE MELDUNGEN SENDEN
+// ALLE MELDUNGEN
 // ======================================================
 
 async function sendAllReports(
@@ -1175,7 +1131,9 @@ async function answerSources(
   let answer =
 `Meine Verkehrsmeldungen werden aus angebundenen Verkehrsdatenquellen abgerufen und nicht von der KI erfunden.
 
-${sources.length === 1 ? "Datenquelle:" : "Datenquellen:"}`;
+${sources.length === 1
+  ? "Datenquelle:"
+  : "Datenquellen:"}`;
 
   for (
     let i = 0;
@@ -1204,7 +1162,7 @@ Datendienst: ${source.dataUrl}`;
 
 
 // ======================================================
-// WAS BIST DU? / ÜBER DEN BOT
+// FRAGEN ÜBER DEN BOT
 // ======================================================
 
 async function answerAbout(
@@ -1235,21 +1193,19 @@ Ich bin hauptsächlich für Verkehrsinformationen gedacht, kann aber auch Fragen
   ) {
     await sendWhatsApp(
       from,
-`Ich bin ein von Pauli Schuberth erstellter Verkehrsbot und helfe dir bei Fragen zum Straßenverkehr in Deutschland.
+`Ich bin ein von Pauli Schuberth erstellter Verkehrsbot, der dir bei Fragen zum Straßenverkehr in Deutschland helfen kann.
 
-Ich kann aktuelle Verkehrsmeldungen zu Autobahnen abrufen und dir zum Beispiel Informationen über Staus, Baustellen, Sperrungen und andere Verkehrsstörungen anzeigen.
+Ich kann aktuelle Verkehrsmeldungen zu Autobahnen abrufen und dir zum Beispiel Informationen zu Staus, Baustellen, Sperrungen und anderen Verkehrsstörungen anzeigen.
 
 Für Bundesstraßen, Landes- und Staatsstraßen sowie Stadt- und Nebenstraßen stehen mir derzeit noch nicht ausreichend Verkehrs- und Vergleichsdaten zur Verfügung, um überall zuverlässige Auskünfte geben zu können.
-
-Wenn du wissen möchtest, woher meine Verkehrsdaten stammen, schreib einfach „Quellen“.
 
 Du kannst mich zum Beispiel fragen:
 
 „Was ist auf der A46 los?“
-
 „Gibt es Baustellen auf der A3?“
+„Zeig mir alle Meldungen auf der A40.“
 
-„Zeig mir alle Meldungen auf der A40.“`,
+Wenn du wissen möchtest, woher meine Verkehrsdaten stammen, kannst du mich auch nach meinen Quellen fragen.`,
       env
     );
 
@@ -1288,7 +1244,11 @@ Die KI dient hauptsächlich dazu, deine Anfrage zu verstehen.
 
 Aktuelle Verkehrsmeldungen werden aus den angebundenen Verkehrsdatenquellen abgerufen und nicht von der KI erfunden.
 
-Wenn du meine Datenquellen sehen möchtest, schreib „Quellen“.`;
+Du kannst mich zum Beispiel fragen:
+
+„Was ist auf der A46 los?“
+„Welche Baustellen gibt es auf der A3?“
+„Woher hast du deine Daten?“`;
 
   if (env.CONTACT_EMAIL) {
     answer +=
@@ -1304,7 +1264,7 @@ Wenn du meine Datenquellen sehen möchtest, schreib „Quellen“.`;
 
 
 // ======================================================
-// NORMALER CHAT
+// NORMALER CHAT MIT GESPRÄCHSKONTEXT
 // ======================================================
 
 async function normalChat(
@@ -1315,7 +1275,7 @@ async function normalChat(
   if (!env.AI) {
     await sendWhatsApp(
       from,
-      `Du kannst mir ganz normal schreiben. Für aktuelle Verkehrsdaten nenn mir am besten eine Autobahn, zum Beispiel A46.`,
+      `Du kannst ganz normal mit mir schreiben. Wie kann ich dir helfen?`,
       env
     );
 
@@ -1323,33 +1283,110 @@ async function normalChat(
   }
 
   try {
-    const result =
-      await env.AI.run(
-        "@cf/meta/llama-3.1-8b-instruct-fast",
-        {
-          messages: [
-            {
-              role: "system",
-              content: `
-Du bist der freundliche Assistent von
+    const key =
+      `chat:${from}`;
+
+    let history = [];
+
+    if (env.SESSIONS) {
+      try {
+        history =
+          await env.SESSIONS.get(
+            key,
+            "json"
+          ) || [];
+      } catch (error) {
+        console.error(
+          "Chat history load error:",
+          error
+        );
+      }
+    }
+
+    history =
+      Array.isArray(history)
+        ? history.slice(-8)
+        : [];
+
+    const messages = [
+      {
+        role: "system",
+        content: `
+Du bist der WhatsApp-Assistent von
 Paulis Verkehrsservice.
 
-Du bist ein WhatsApp-Verkehrsbot.
+SPRACHE:
 
-Antworte kurz, natürlich und auf Deutsch.
+Sprich den Nutzer immer mit "du" an.
 
-Der Nutzer darf ganz normal mit dir
-sprechen und einfache Fragen stellen.
+Verwende nicht "Sie", "Ihnen", "Ihr"
+oder andere förmliche Anreden,
+außer der Nutzer verlangt ausdrücklich
+eine förmliche Anrede.
 
-Wenn der Nutzer aktuelle Verkehrsdaten,
-Staus, Baustellen, Sperrungen oder
-Verkehrsstörungen wissen möchte,
-darfst du diese niemals aus deinem
-KI-Wissen beantworten oder erfinden.
+Antworte natürlich und passend zur
+konkreten Nachricht.
 
-Bitte den Nutzer stattdessen, eine
-Autobahn zu nennen, damit die echte
-Verkehrsdatenquelle abgefragt werden kann.
+Bei einer einfachen Begrüßung wie
+"Hallo", "Hi" oder "Hey" antworte kurz
+und freundlich, zum Beispiel:
+"Hallo! Wie kann ich dir helfen?"
+
+Gib bei einer einfachen Begrüßung nicht
+ungefragt eine lange Funktionsbeschreibung.
+
+GESPRÄCHSKONTEXT:
+
+Beziehe vorherige Nachrichten mit ein.
+
+Wenn der Nutzer beispielsweise schreibt:
+
+"Warum?"
+"Warum Ihnen?"
+"Was meinst du?"
+"Wie meinst du das?"
+"Und warum?"
+"Das meine ich"
+
+dann bezieht sich die Nachricht
+möglicherweise auf deine vorherige Antwort.
+
+Beantworte die Rückfrage im Zusammenhang
+mit dem bisherigen Gespräch.
+
+Beginne nicht unnötig wieder bei null.
+
+Wenn du vorher versehentlich die Sie-Form
+verwendet hast und der Nutzer darauf
+hinweist, korrigiere dich kurz.
+
+BEISPIELFRAGEN:
+
+Wenn Beispiele sinnvoll sind, verwende
+die Formulierung:
+
+"Du kannst mich zum Beispiel fragen:"
+
+Danach können passende Beispielfragen
+folgen.
+
+VERKEHR:
+
+Du bist hauptsächlich ein Verkehrsbot
+für Deutschland.
+
+Aktuelle Verkehrsdaten, Staus,
+Baustellen, Sperrungen und
+Verkehrsstörungen darfst du niemals
+erfinden.
+
+Behaupte niemals, aktuelle Verkehrsdaten
+abgerufen zu haben, wenn keine echte
+Datenquelle abgefragt wurde.
+
+Wenn aktuelle Verkehrsdaten benötigt
+werden, bitte den Nutzer, eine Autobahn
+zu nennen.
 
 Für Bundesstraßen, Landes- und
 Staatsstraßen sowie Stadt- und
@@ -1358,28 +1395,66 @@ ausreichend Verkehrs- und Vergleichsdaten
 zur Verfügung, um überall zuverlässige
 Auskünfte geben zu können.
 
-Wenn du nach deiner Aufgabe gefragt wirst,
-erkläre, dass du bei Fragen zum
-Straßenverkehr in Deutschland hilfst.
-
-Behaupte niemals, Daten abgerufen zu
-haben, wenn keine Datenquelle abgefragt
-wurde.
+Wiederhole nicht bei jeder Nachricht
+deine vollständige Funktionsbeschreibung.
 `
-            },
+      },
 
-            {
-              role: "user",
-              content: text
-            }
-          ]
+      ...history,
+
+      {
+        role: "user",
+        content: text
+      }
+    ];
+
+    const result =
+      await env.AI.run(
+        "@cf/meta/llama-3.1-8b-instruct-fast",
+        {
+          messages
         }
       );
 
     const answer =
       typeof result?.response === "string"
         ? result.response.trim()
-        : `Du kannst mir ganz normal schreiben. Für aktuelle Verkehrsdaten nenn mir am besten eine Autobahn.`;
+        : "Wie kann ich dir helfen?";
+
+
+    // Gespräch speichern
+    if (env.SESSIONS) {
+      const newHistory = [
+        ...history,
+
+        {
+          role: "user",
+          content: text
+        },
+
+        {
+          role: "assistant",
+          content: answer
+        }
+
+      ].slice(-8);
+
+      try {
+        await env.SESSIONS.put(
+          key,
+          JSON.stringify(newHistory),
+          {
+            expirationTtl: 1800
+          }
+        );
+
+      } catch (error) {
+        console.error(
+          "Chat history save error:",
+          error
+        );
+      }
+    }
 
     await sendWhatsApp(
       from,
@@ -1395,7 +1470,7 @@ wurde.
 
     await sendWhatsApp(
       from,
-      `Du kannst mir ganz normal schreiben. Für aktuelle Verkehrsdaten nenn mir am besten eine Autobahn.`,
+      `Du kannst ganz normal mit mir schreiben. Wie kann ich dir helfen?`,
       env
     );
   }
@@ -1403,13 +1478,7 @@ wurde.
 
 
 // ======================================================
-// KV SESSION
-//
-// Cloudflare Binding:
-// SESSIONS
-//
-// Namespace:
-// verkehrsapi1-sessions
+// VERKEHRS-SESSION SPEICHERN
 // ======================================================
 
 async function saveSession(
@@ -1430,7 +1499,6 @@ async function saveSession(
       `wa:${from}`,
       JSON.stringify(session),
       {
-        // 30 Minuten
         expirationTtl: 1800
       }
     );
@@ -1470,7 +1538,7 @@ async function loadSession(
 
 
 // ======================================================
-// MELDUNG FORMATIEREN
+// MELDUNGEN FORMATIEREN
 // ======================================================
 
 function buildTrafficTitle(item) {
@@ -1771,7 +1839,7 @@ function cleanText(value) {
 
 
 // ======================================================
-// QUELLENFRAGEN ERKENNEN
+// QUELLENFRAGEN
 // ======================================================
 
 function isSourceQuestion(text) {
@@ -1807,7 +1875,7 @@ function isSourceQuestion(text) {
 
 
 // ======================================================
-// BOT-FRAGEN ERKENNEN
+// BOT-FRAGEN
 // ======================================================
 
 function isAboutQuestion(text) {
