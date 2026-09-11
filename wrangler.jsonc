@@ -1,7 +1,7 @@
 {
   "name": "verkehrsapi1",
   "main": "worker.js",
-  "compatibility_date": "2026-09-06,
+  "compatibility_date": "2026-09-11",
 
   "ai": {
     "binding": "AI"
