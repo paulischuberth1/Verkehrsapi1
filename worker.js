@@ -102,9 +102,9 @@ async function handleWhatsApp(body, env) {
     if (!text) {
       await sendWhatsApp(
         from,
-        `Du kannst mir einfach eine Nachricht schreiben.
+        
 
-Du kannst mich zum Beispiel fragen:
+`Du kannst mich zum Beispiel fragen:
 
 „Was ist auf der A46 los?“
 „Welche Baustellen gibt es auf der A3?“
